@@ -26,6 +26,9 @@ namespace EmbyPlaylistMigration
         private readonly PlaylistService _playlistService;
         private List<IPluginUIPageController> _pages;
 
+        public OptionsStore OptionsStore => _optionsStore;
+        public PlaylistService PlaylistService => _playlistService;
+
         public Plugin(
             IServerApplicationHost appHost,
             ILibraryManager libraryManager,

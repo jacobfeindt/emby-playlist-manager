@@ -72,6 +72,10 @@ namespace EmbyPlaylistMigration.UI
 
         public override Task<IPluginUIView> OnSaveCommand(string itemId, string commandId, string data)
         {
+            // Clear transient display state before persisting
+            this.Options.PreviewList.Clear();
+            this.Options.Status.StatusText = "No operation started yet.";
+            this.Options.Status.Status = ItemStatus.Unavailable;
             store.SetOptions(this.Options);
             return base.OnSaveCommand(itemId, commandId, data);
         }
@@ -220,11 +224,7 @@ namespace EmbyPlaylistMigration.UI
 
         private HashSet<string> GetExistingPlaylistNames()
         {
-            var existing = libraryManager.GetItemList(new InternalItemsQuery
-            {
-                IncludeItemTypes = new[] { "Playlist" }
-            });
-            return new HashSet<string>(existing.Select(p => p.Name), StringComparer.OrdinalIgnoreCase);
+            return playlistService.GetExistingPlaylistNames(GetUser());
         }
 
         private User GetUser()
@@ -240,7 +240,6 @@ namespace EmbyPlaylistMigration.UI
             this.Options.Status.Status = status;
             this.Options.ExportButton.IsEnabled = status != ItemStatus.InProgress;
             this.Options.ImportButton.IsEnabled = status != ItemStatus.InProgress;
-            store.SetOptions(this.Options);
             RaiseUIViewInfoChanged();
         }
     }

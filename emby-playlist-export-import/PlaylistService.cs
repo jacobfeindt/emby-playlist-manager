@@ -26,6 +26,15 @@ namespace EmbyPlaylistMigration
             _logger = logger;
         }
 
+        public HashSet<string> GetExistingPlaylistNames(User user)
+        {
+            var existing = _libraryManager.GetItemList(new InternalItemsQuery(user)
+            {
+                IncludeItemTypes = new[] { "Playlist" }
+            });
+            return new HashSet<string>(existing.Select(p => p.Name), StringComparer.OrdinalIgnoreCase);
+        }
+
         public List<PlaylistExportDto> ExportAllPlaylists(User user)
         {
             var playlists = _libraryManager.GetItemList(new InternalItemsQuery(user)
@@ -113,15 +122,25 @@ namespace EmbyPlaylistMigration
                 User = user
             });
 
-            var playlistGuid = new Guid(createResult.Id);
-            var playlistItem = _libraryManager.GetItemById(playlistGuid);
-            if (playlistItem == null)
+            if (!long.TryParse(createResult.Id, out var playlistInternalId))
             {
-                _logger.Warn("Failed to retrieve newly created playlist '{0}'.", playlist.PlaylistName);
-                return;
+                _logger.Warn("Could not parse playlist ID '{0}' for '{1}'. Trying Guid parse.", createResult.Id, playlist.PlaylistName);
+                if (Guid.TryParse(createResult.Id, out var playlistGuid))
+                {
+                    var playlistItem = _libraryManager.GetItemById(playlistGuid);
+                    if (playlistItem == null)
+                    {
+                        _logger.Warn("Could not find playlist '{0}' by Guid {1}.", playlist.PlaylistName, playlistGuid);
+                        return;
+                    }
+                    playlistInternalId = playlistItem.InternalId;
+                }
+                else
+                {
+                    _logger.Warn("Unrecognized playlist ID format '{0}' for '{1}'.", createResult.Id, playlist.PlaylistName);
+                    return;
+                }
             }
-
-            var playlistInternalId = playlistItem.InternalId;
             int added = 0, missing = 0;
 
             foreach (var dto in playlist.Items)
@@ -134,14 +153,14 @@ namespace EmbyPlaylistMigration
                     {
                         item = _libraryManager.GetItemList(new InternalItemsQuery(user)
                         {
-                            HasAnyProviderId = new[] { "Imdb:" + dto.ImdbId }
+                            AnyProviderIdEquals = new[] { new KeyValuePair<string, string>("Imdb", dto.ImdbId) }
                         }).FirstOrDefault();
                     }
                     else if (dto.TmdbId.HasValue)
                     {
                         item = _libraryManager.GetItemList(new InternalItemsQuery(user)
                         {
-                            HasAnyProviderId = new[] { "Tmdb:" + dto.TmdbId.Value }
+                            AnyProviderIdEquals = new[] { new KeyValuePair<string, string>("Tmdb", dto.TmdbId.Value.ToString()) }
                         }).FirstOrDefault();
                     }
                     else if (dto.SeriesTmdbId.HasValue && dto.Season.HasValue && dto.Episode.HasValue)
@@ -149,7 +168,7 @@ namespace EmbyPlaylistMigration
                         var series = _libraryManager.GetItemList(new InternalItemsQuery(user)
                         {
                             IncludeItemTypes = new[] { "Series" },
-                            HasAnyProviderId = new[] { "Tmdb:" + dto.SeriesTmdbId.Value }
+                            AnyProviderIdEquals = new[] { new KeyValuePair<string, string>("Tmdb", dto.SeriesTmdbId.Value.ToString()) }
                         }).FirstOrDefault();
 
                         if (series != null)

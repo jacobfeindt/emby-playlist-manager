@@ -318,16 +318,18 @@ Constructor receives `ILibraryManager`, `IPlaylistManager`, `ILogger`.
 - [x] Collision detection — existing playlist names skipped on import
 - [x] Preview list — auto-populates via `[AutoPostBack]` when file path changes
 - [x] Export filename includes server friendly name: `{ServerName}-playlists-{timestamp}.json`
-- [ ] Validate export/import against a live Emby instance with real media
-- [ ] Confirm `HasAnyProviderId` query format works for IMDb/TMDb lookups
-- [ ] Confirm episode resolution via `AncestorIds` + `ParentIndexNumber` + `IndexNumber`
+- [x] Item resolution via `AnyProviderIdEquals` — movies by IMDb/TMDb, episodes by IMDb or series TMDb + S/E
+- [x] `createResult.Id` parsed as `long` (InternalId) with Guid fallback
+- [x] Transient state (PreviewList, Status) not persisted to disk
+- [x] Validated against live Emby instance — Added: 2/2 movies, Added: 1/1 episode, Missing: 0
 
-### Phase 3 — HTTP API (deferred)
-- [ ] `Services/ExportPlaylistRequest.cs`
-- [ ] `Services/ImportPlaylistRequest.cs`
-- [ ] `Services/PlaylistApi.cs`
-- [ ] Test via Emby API browser
+### Phase 3 — HTTP API ✅ Complete
+- [x] `Services/ExportPlaylistsRequest.cs` — GET with optional OutputFolder param
+- [x] `Services/ImportPlaylistsRequest.cs` — POST with `List<PlaylistExportDto>` body
+- [x] `Services/PlaylistMigrationApi.cs` — resolves Plugin from IApplicationHost
+- [x] Collision detection reused from PlaylistService.GetExistingPlaylistNames
+- [ ] Test via Emby API browser / Swagger
 
-### Phase 4 — Polish
-- [ ] Add real `ThumbImage.png` as embedded resource
-- [ ] Update README with usage instructions
+### Phase 4 — Polish ✅ Complete
+- [x] Real `ThumbImage.png` embedded resource
+- [x] README updated with full usage, API docs, JSON format, known limitations

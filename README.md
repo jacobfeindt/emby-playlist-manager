@@ -2,18 +2,16 @@
 
 An Emby Server plugin that exports and imports playlists using provider IDs (IMDb/TMDb) instead of file paths, making playlists fully portable across systems (e.g., Windows → Linux migrations).
 
-## Status
-
-> **Phase 1 Complete** — Project foundation builds cleanly. Core logic and HTTP API in progress.
-> See [implementation plan](docs/reference/implementaiton_plan.md) for full phase breakdown.
-
 ## Features
 
-- Export playlists to portable JSON (by IMDb/TMDb ID, not file path)
-- Import playlists from JSON, resolving items against the local library
+- Export all playlists to a single portable JSON file
+- Import playlists from JSON, resolving items against the local library by IMDb/TMDb ID
 - Handles movies, TV series, and individual episodes
-- Native Emby plugin UI for configuring export/import paths and triggering operations
-- HTTP API endpoints for automation
+- Collision detection — playlists that already exist on the target server are skipped
+- Preview imported playlists before committing — shows item counts and collision status
+- Export filename includes the source server name and timestamp
+- Native Emby plugin UI with folder/file pickers, action buttons, and live status feedback
+- HTTP API endpoints for automation and scripting
 - Per-item error handling — one unresolvable item never aborts the whole import
 - Full activity logging via Emby's logging framework
 
@@ -31,16 +29,23 @@ Emby's internal item IDs and file paths change when you migrate to a new server 
 ```
 emby-playlist-export-import/
 ├── emby-playlist-export-import.csproj
-├── Plugin.cs                  # Plugin entry point (BasePluginSimpleUI<PluginOptions>)
-├── PluginOptions.cs           # UI options page (export/import config)
-├── PlaylistService.cs         # Core export/import logic
-├── Services/                  # HTTP API (Phase 3)
-│   ├── ExportPlaylistRequest.cs
-│   ├── ImportPlaylistRequest.cs
-│   └── PlaylistApi.cs
+├── Plugin.cs                    # Plugin entry point (BasePlugin + IHasUIPages)
+├── PluginOptions.cs             # UI options page
+├── PlaylistService.cs           # Core export/import logic
 ├── Models/
-│   └── PlaylistItemDto.cs     # Portable playlist item DTO
-└── ThumbImage.png             # Plugin icon (embedded resource)
+│   ├── PlaylistExportDto.cs     # Top-level export wrapper (one per playlist)
+│   └── PlaylistItemDto.cs       # Portable media item (provider IDs)
+├── Services/
+│   ├── ExportPlaylistsRequest.cs
+│   ├── ImportPlaylistsRequest.cs
+│   └── PlaylistMigrationApi.cs  # HTTP API service
+├── Storage/
+│   └── OptionsStore.cs          # Persists plugin settings to disk
+├── UI/
+│   ├── PageController.cs        # Wires page view into Emby UI system
+│   └── PluginPageView.cs        # Button handlers, preview, status updates
+├── UIBaseClasses/               # Boilerplate from Emby SDK UI template
+└── ThumbImage.png               # Plugin icon (embedded resource)
 ```
 
 ## Build Setup
@@ -50,9 +55,8 @@ This project references DLLs directly from an Emby Server `system` folder rather
 ### Prerequisites
 
 1. A copy of the Emby Server `system` folder at `C:\Git\Emby-Server\system`
-   - Contains `MediaBrowser.Common.dll`, `MediaBrowser.Controller.dll`, `MediaBrowser.Model.dll`, `Emby.Web.GenericEdit.dll`
+   - Must contain `MediaBrowser.Common.dll`, `MediaBrowser.Controller.dll`, `MediaBrowser.Model.dll`, `Emby.Web.GenericEdit.dll`
    - Version 4.9.3.0 (.NET 8)
-
 2. .NET 8 SDK
 
 ### Building
@@ -63,61 +67,102 @@ dotnet build emby-playlist-export-import.csproj
 
 Output: `bin\Debug\net8.0\EmbyPlaylistMigration.dll`
 
-### Deployment
-
-Copy `EmbyPlaylistMigration.dll` to the Emby Server plugins folder:
-
-```
-%AppData%\Emby-Server\programdata\plugins\
-```
-
-The PostBuild copy step in the `.csproj` is commented out by default since this project is developed on a workstation without a local Emby Server install. Uncomment it to enable automatic deploy on build.
+The PostBuild step automatically copies the DLL to `%AppData%\Emby-Server\programdata\plugins\` on build.
 
 ## Usage
 
 ### Via Plugin UI
 
-1. Open Emby Dashboard → Plugins → Playlist Export/Import
-2. **Export**: Enter the playlist ID and output folder path, save
-3. **Import**: Enter the path to a previously exported JSON file and a name for the new playlist, save
+1. Open Emby Dashboard → Plugins → Playlist Export Import
+2. **Export**: Set the output folder, click **Export All Playlists**
+   - Creates `{ServerName}-playlists-{timestamp}.json` in the output folder
+3. **Import**: Select the JSON file using the file picker
+   - A preview list loads automatically showing each playlist, item count, and whether it will be imported or skipped
+   - Click **Import Playlists** to create all non-colliding playlists
 
-### Via HTTP API (Phase 3)
+### Via HTTP API
 
-**Export:**
+**Export** — exports all playlists and writes a JSON file to the configured output folder:
 ```
-GET /PlaylistMigration/Export?PlaylistId={guid}
-Authorization: MediaBrowser Token="..."
+GET /PlaylistMigration/Export
+GET /PlaylistMigration/Export?OutputFolder=C:\exports
+Authorization: MediaBrowser Token="your-api-key"
 ```
 
-**Import:**
+Response:
+```json
+{ "FilePath": "C:\\exports\\SERVERNAME-playlists-20260411-143022.json", "PlaylistCount": 3 }
 ```
-POST /PlaylistMigration/Import?PlaylistName=MyPlaylist
+
+**Import** — imports playlists from a JSON body, skipping any that already exist by name:
+```
+POST /PlaylistMigration/Import
+Authorization: MediaBrowser Token="your-api-key"
 Content-Type: application/json
-Authorization: MediaBrowser Token="..."
+
+[
+  {
+    "PlaylistName": "My Movies",
+    "PlaylistId": "00000000-0000-0000-0000-000000000000",
+    "Items": [
+      { "Name": "Inception", "ImdbId": "tt1375666", "TmdbId": 27205 },
+      { "Name": "RoboCop", "ImdbId": "tt0093870", "TmdbId": 5548 }
+    ]
+  }
+]
+```
+
+Response:
+```json
+{ "Imported": 1, "Skipped": 0 }
 ```
 
 ## Exported JSON Format
 
+Each export file is an array of playlist objects. A single export covers all playlists on the server.
+
 ```json
 [
   {
-    "Name": "Inception",
-    "ImdbId": "tt1375666",
-    "TmdbId": 27205,
-    "SeriesTmdbId": null,
-    "Season": null,
-    "Episode": null
+    "PlaylistName": "My Movies",
+    "PlaylistId": "1ec3d3ec-997d-bf88-f7ad-49ecaa506c43",
+    "Items": [
+      {
+        "Name": "Inception",
+        "ImdbId": "tt1375666",
+        "TmdbId": 27205,
+        "SeriesTmdbId": null,
+        "Season": null,
+        "Episode": null
+      }
+    ]
   },
   {
-    "Name": "Ozymandias",
-    "ImdbId": null,
-    "TmdbId": null,
-    "SeriesTmdbId": 1396,
-    "Season": 5,
-    "Episode": 14
+    "PlaylistName": "TV Favourites",
+    "PlaylistId": "1595e602-b5e3-8fe8-30f6-e0186641f2d6",
+    "Items": [
+      {
+        "Name": "Pilot",
+        "ImdbId": "tt0620288",
+        "TmdbId": null,
+        "SeriesTmdbId": 1396,
+        "Season": 1,
+        "Episode": 1
+      }
+    ]
   }
 ]
 ```
+
+- `PlaylistId` is for reference only — it is never used during import
+- Movies/series resolve via `ImdbId` first, then `TmdbId`
+- Episodes resolve via `ImdbId` if present, otherwise via `SeriesTmdbId` + `Season` + `Episode`
+
+## Known Limitations
+
+- Export captures provider IDs that Emby has scraped — items without IMDb or TMDb IDs will not resolve on import and will be logged as missing
+- Episode `SeriesTmdbId` is only populated if the series was scraped with TMDb; if only IMDb is present the episode still resolves via its own `ImdbId`
+- Collision detection is name-based — renaming a playlist before import will allow it through
 
 ## SDK Reference
 
