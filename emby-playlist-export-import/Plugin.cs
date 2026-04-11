@@ -1,25 +1,44 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
-using MediaBrowser.Common;
+using EmbyPlaylistMigration.Storage;
+using EmbyPlaylistMigration.UI;
 using MediaBrowser.Common.Plugins;
-using MediaBrowser.Controller.Plugins;
+using MediaBrowser.Controller;
+using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.Playlists;
 using MediaBrowser.Model.Drawing;
 using MediaBrowser.Model.Logging;
+using MediaBrowser.Model.Plugins;
+using MediaBrowser.Model.Plugins.UI;
 
 namespace EmbyPlaylistMigration
 {
-    public class Plugin : BasePluginSimpleUI<PluginOptions>, IHasThumbImage
+    public class Plugin : BasePlugin, IHasThumbImage, IHasUIPages, IHasPluginConfiguration
     {
-        public const string PluginName = "Playlist Export/Import";
-
+        public const string PluginName = "Playlist Export Import";
         private readonly Guid _id = new Guid("7b3d3243-e854-4aaf-9636-1505fdd78d6c");
-        private readonly ILogger _logger;
 
-        public Plugin(IApplicationHost applicationHost, ILogManager logManager)
-            : base(applicationHost)
+        private readonly IServerApplicationHost _appHost;
+        private readonly ILibraryManager _libraryManager;
+        private readonly ILogger _logger;
+        private readonly OptionsStore _optionsStore;
+        private readonly PlaylistService _playlistService;
+        private List<IPluginUIPageController> _pages;
+
+        public Plugin(
+            IServerApplicationHost appHost,
+            ILibraryManager libraryManager,
+            IPlaylistManager playlistManager,
+            IUserManager userManager,
+            ILogManager logManager)
         {
+            _appHost = appHost;
+            _libraryManager = libraryManager;
             _logger = logManager.GetLogger(PluginName);
-            _logger.Info("Playlist Export/Import plugin loaded.");
+            _optionsStore = new OptionsStore(appHost, _logger, PluginName);
+            _playlistService = new PlaylistService(libraryManager, playlistManager, _logger);
+            _logger.Info("Playlist Export Import plugin loaded.");
         }
 
         public override string Name => PluginName;
@@ -34,9 +53,31 @@ namespace EmbyPlaylistMigration
             return type.Assembly.GetManifestResourceStream(type.Namespace + ".ThumbImage.png");
         }
 
-        protected override void OnOptionsSaved(PluginOptions options)
+        public IReadOnlyCollection<IPluginUIPageController> UIPageControllers
         {
-            _logger.Info("Playlist Export/Import plugin options saved.");
+            get
+            {
+                if (_pages == null)
+                {
+                    _pages = new List<IPluginUIPageController>
+                    {
+                        new PageController(
+                            GetPluginInfo(),
+                            _appHost,
+                            _optionsStore,
+                            _appHost.Resolve<IUserManager>(),
+                            _libraryManager,
+                            _playlistService,
+                            _logger)
+                    };
+                }
+                return _pages.AsReadOnly();
+            }
         }
+
+        public Type ConfigurationType => typeof(PluginOptions);
+        public BasePluginConfiguration Configuration { get; } = new BasePluginConfiguration();
+        public void UpdateConfiguration(BasePluginConfiguration configuration) { }
+        public void SetStartupInfo(Action<string> directoryCreateFn) { }
     }
 }

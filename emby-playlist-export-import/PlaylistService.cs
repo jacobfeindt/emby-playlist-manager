@@ -26,23 +26,39 @@ namespace EmbyPlaylistMigration
             _logger = logger;
         }
 
-        public List<PlaylistItemDto> ExportPlaylistItems(User user, Guid playlistId)
+        public List<PlaylistExportDto> ExportAllPlaylists(User user)
         {
-            var playlist = _libraryManager.GetItemById(playlistId) as Playlist;
-            if (playlist == null)
+            var playlists = _libraryManager.GetItemList(new InternalItemsQuery(user)
             {
-                _logger.Warn("Playlist with ID {0} not found for user {1}.", playlistId, user.Name);
-                return new List<PlaylistItemDto>();
+                IncludeItemTypes = new[] { "Playlist" }
+            });
+
+            _logger.Info("Exporting {0} playlists for user {1}.", playlists.Length, user.Name);
+
+            var result = new List<PlaylistExportDto>();
+            foreach (var p in playlists)
+            {
+                var export = ExportPlaylist(user, p);
+                result.Add(export);
             }
 
-            _logger.Info("Exporting playlist '{0}' ({1}) for user {2}.", playlist.Name, playlistId, user.Name);
+            _logger.Info("Export complete. {0} playlists exported.", result.Count);
+            return result;
+        }
+
+        private PlaylistExportDto ExportPlaylist(User user, BaseItem playlistItem)
+        {
+            var export = new PlaylistExportDto
+            {
+                PlaylistName = playlistItem.Name,
+                PlaylistId = playlistItem.Id
+            };
 
             var playlistItems = _libraryManager.GetItemList(new InternalItemsQuery(user)
             {
-                ParentIds = new[] { playlist.InternalId }
+                ListIds = new[] { playlistItem.InternalId }
             });
 
-            var items = new List<PlaylistItemDto>();
             foreach (var item in playlistItems)
             {
                 var dto = new PlaylistItemDto { Name = item.Name };
@@ -68,35 +84,47 @@ namespace EmbyPlaylistMigration
                         dto.TmdbId = tmdbId;
                 }
 
-                items.Add(dto);
+                export.Items.Add(dto);
             }
 
-            _logger.Info("Exported {0} items from playlist '{1}'.", items.Count, playlist.Name);
-            return items;
+            _logger.Info("Playlist '{0}': {1} items exported.", export.PlaylistName, export.Items.Count);
+            return export;
         }
 
-        public async Task ImportPlaylistItems(User user, string playlistName, List<PlaylistItemDto> items)
+        public async Task ImportPlaylists(User user, List<PlaylistExportDto> playlists)
         {
-            _logger.Info("Starting import of playlist '{0}' for user {1}.", playlistName, user.Name);
+            _logger.Info("Starting import of {0} playlists for user {1}.", playlists.Count, user.Name);
+
+            foreach (var playlist in playlists)
+            {
+                await ImportPlaylist(user, playlist);
+            }
+
+            _logger.Info("Import complete for user {0}.", user.Name);
+        }
+
+        private async Task ImportPlaylist(User user, PlaylistExportDto playlist)
+        {
+            _logger.Info("Importing playlist '{0}' ({1} items).", playlist.PlaylistName, playlist.Items.Count);
 
             var createResult = await _playlistManager.CreatePlaylist(new PlaylistCreationRequest
             {
-                Name = playlistName,
+                Name = playlist.PlaylistName,
                 User = user
             });
 
             var playlistGuid = new Guid(createResult.Id);
-            var playlist = _libraryManager.GetItemById(playlistGuid);
-            if (playlist == null)
+            var playlistItem = _libraryManager.GetItemById(playlistGuid);
+            if (playlistItem == null)
             {
-                _logger.Warn("Failed to retrieve newly created playlist '{0}'.", playlistName);
+                _logger.Warn("Failed to retrieve newly created playlist '{0}'.", playlist.PlaylistName);
                 return;
             }
 
-            var playlistInternalId = playlist.InternalId;
+            var playlistInternalId = playlistItem.InternalId;
             int added = 0, missing = 0;
 
-            foreach (var dto in items)
+            foreach (var dto in playlist.Items)
             {
                 try
                 {
@@ -139,7 +167,7 @@ namespace EmbyPlaylistMigration
                     if (item != null)
                     {
                         _playlistManager.AddToPlaylist(playlistInternalId, new[] { item.InternalId }, user);
-                        _logger.Info("Added '{0}' to playlist '{1}'.", item.Name, playlistName);
+                        _logger.Info("Added '{0}' to '{1}'.", item.Name, playlist.PlaylistName);
                         added++;
                     }
                     else
@@ -155,7 +183,7 @@ namespace EmbyPlaylistMigration
                 }
             }
 
-            _logger.Info("Import complete for '{0}'. Added: {1}, Missing: {2}.", playlistName, added, missing);
+            _logger.Info("Playlist '{0}' import done. Added: {1}, Missing: {2}.", playlist.PlaylistName, added, missing);
         }
     }
 }

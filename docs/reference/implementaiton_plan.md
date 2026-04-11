@@ -151,26 +151,30 @@ public class Plugin : BasePluginSimpleUI<PluginOptions>, IHasThumbImage
 
 ## Plugin UI (Options Page)
 
-### PluginOptions.cs — `EditableOptionsBase`
-
-Fields rendered automatically by Emby's GenericEdit UI framework:
+### PluginOptions.cs — `EditableOptionsBase` via `IHasUIPages` + `PluginPageView`
 
 ```
-[Section: Export]
-  ExportFolderPath     — [EditFolderPicker] folder picker
-  ExportPlaylistId     — text field (GUID of playlist to export)
-  ExportButton         — ButtonItem triggers export
+[Export]
+  ExportFolder         — folder picker
+  [ Export All Playlists ] — exports all playlists to {ServerName}-playlists-{timestamp}.json
 
-[Section: Import]
-  ImportFilePath       — text field (path to JSON file)
-  ImportPlaylistName   — text field (name for new playlist)
-  ImportButton         — ButtonItem triggers import
+[Import]
+  ImportFilePath       — text field with [AutoPostBack] — triggers preview on change
+  Playlists in File    — GenericItemList preview showing each playlist name, item count,
+                         and whether it will be imported or skipped (collision detection)
+  [ Import Playlists ] — imports all non-colliding playlists from the file
 
 [Status]
-  StatusItem           — shows last operation result
+  StatusItem           — live operation feedback
 ```
 
-> For live status feedback, upgrade to the full `IHasUIPages` + `PluginPageView` pattern from `EmbyPluginUiTemplate`.
+### Key UI behaviors
+- No playlist name input on import — name comes from the export file
+- Preview auto-loads when `ImportFilePath` changes (AutoPostBack)
+- Collision detection: playlists already existing by name show as Warning/skipped in preview
+- Export filename format: `{ServerFriendlyName}-playlists-{yyyyMMdd-HHmmss}.json`
+- Both buttons disabled during in-progress operations
+- Preview refreshes after import completes
 
 ---
 
@@ -215,6 +219,7 @@ public class PlaylistApi : IService
 ## Data Model
 
 ### PlaylistItemDto
+Portable representation of a single media item:
 
 ```csharp
 public class PlaylistItemDto
@@ -222,17 +227,28 @@ public class PlaylistItemDto
     public string Name { get; set; }
     public string ImdbId { get; set; }
     public int? TmdbId { get; set; }
-
-    // Episode-specific
     public int? SeriesTmdbId { get; set; }
     public int? Season { get; set; }
     public int? Episode { get; set; }
 }
 ```
 
-- Movies/Series: resolve via `ImdbId` → `TmdbId`
-- Episodes: resolve via `SeriesTmdbId` + `Season` + `Episode`
-- Never store file paths or internal Emby IDs
+### PlaylistExportDto
+Top-level wrapper — a single export file is always `List<PlaylistExportDto>` regardless of whether one or all playlists were exported:
+
+```csharp
+public class PlaylistExportDto
+{
+    public string PlaylistName { get; set; }  // used as the playlist name on import
+    public Guid PlaylistId { get; set; }      // reference only, never used on import
+    public List<PlaylistItemDto> Items { get; set; }
+}
+```
+
+- Export single or all → always produces `List<PlaylistExportDto>`
+- Import → iterates the list, creates a playlist per entry
+- Collision detection: playlists whose name already exists on the target server are skipped
+- `PlaylistName` from the export is used directly — no user input needed on import
 
 ---
 
@@ -245,25 +261,26 @@ Constructor receives `ILibraryManager`, `IPlaylistManager`, `ILogger`.
 #### Export
 
 ```
-1. _libraryManager.GetItemById(playlistGuid) — cast to Playlist
-2. _libraryManager.GetItemList(new InternalItemsQuery(user) { ParentIds = new[] { playlist.InternalId } })
-3. For each item: map ProviderIds → PlaylistItemDto
-4. For episodes: reflect to get SeriesProviderIds["Tmdb"], ParentIndexNumber, IndexNumber
-5. Serialize to JSON, write to ExportFolderPath
-6. Return List<PlaylistItemDto>
+1. GetItemList(InternalItemsQuery { IncludeItemTypes = ["Playlist"] }) — get all playlists
+2. For each playlist:
+   a. GetItemList({ ParentIds = [playlist.InternalId] }) — get items
+   b. Map each item's ProviderIds → PlaylistItemDto
+   c. For episodes: reflect SeriesProviderIds["Tmdb"], ParentIndexNumber, IndexNumber
+3. Return List<PlaylistExportDto>
 ```
 
 #### Import
 
 ```
-1. await _playlistManager.CreatePlaylist(new PlaylistCreationRequest { Name, User })
-2. Parse result.Id as Guid → _libraryManager.GetItemById(guid) → playlist.InternalId
-3. For each PlaylistItemDto (wrapped in try/catch):
-   a. Resolve: HasAnyProviderId["Imdb:..."] → ["Tmdb:..."] → series lookup + episode query
-   b. If found: _playlistManager.AddToPlaylist(playlist.InternalId, new[] { item.InternalId }, user)
-      NOTE: AddToPlaylist returns void — do NOT await
-   c. If not found: log warning
-4. Log summary
+1. Caller performs collision detection — only non-colliding playlists passed in
+2. For each PlaylistExportDto:
+   a. CreatePlaylist({ Name = playlist.PlaylistName, User })
+   b. For each PlaylistItemDto (per-item try/catch):
+      - Resolve: HasAnyProviderId["Imdb:..."] → ["Tmdb:..."] → series+episode query
+      - If found: AddToPlaylist(internalId, [item.InternalId], user)  ← void, no await
+      - If not found: log warning
+   c. Log per-playlist summary
+3. Log overall summary
 ```
 
 ---
@@ -287,31 +304,30 @@ Constructor receives `ILibraryManager`, `IPlaylistManager`, `ILogger`.
 ## Implementation Phases
 
 ### Phase 1 — Project Foundation ✅ Complete
-- [x] Recreate `.csproj` targeting `net8.0` with direct DLL references to Emby Server system folder
-- [x] Implement `Plugin.cs` as `BasePluginSimpleUI<PluginOptions>` — GUID: `7b3d3243-e854-4aaf-9636-1505fdd78d6c`
-- [x] Implement `PluginOptions.cs` with export/import fields
-- [x] Implement `PlaylistService.cs` with correct API signatures
-- [x] Clean build — 0 errors, 0 warnings
-- [x] Plugin loads and appears in Emby Dashboard — confirmed in log and UI
-- [x] Assembly version 1.0.0.0 visible in Emby plugins list
+- [x] `net8.0` + direct DLL references to Emby Server system folder
+- [x] `Plugin.cs` as `BasePlugin` + `IHasUIPages` — GUID: `7b3d3243-e854-4aaf-9636-1505fdd78d6c`
+- [x] Full `IHasUIPages` + `PluginPageView` UI pattern
+- [x] `PluginOptions.cs` with export/import fields, buttons, status, preview list
+- [x] `PlaylistService.cs` with correct API signatures
+- [x] Clean build, plugin visible in Emby Dashboard
 
-### Phase 2 — Core Logic
-- [ ] Validate `PlaylistService` export/import against a live Emby instance
+### Phase 2 — Core Logic ✅ Complete
+- [x] `PlaylistExportDto` wrapper — unified format for single and multi-playlist export
+- [x] `ExportAllPlaylists` — exports all playlists to `List<PlaylistExportDto>`
+- [x] `ImportPlaylists` — creates playlists from `List<PlaylistExportDto>`
+- [x] Collision detection — existing playlist names skipped on import
+- [x] Preview list — auto-populates via `[AutoPostBack]` when file path changes
+- [x] Export filename includes server friendly name: `{ServerName}-playlists-{timestamp}.json`
+- [ ] Validate export/import against a live Emby instance with real media
 - [ ] Confirm `HasAnyProviderId` query format works for IMDb/TMDb lookups
-- [ ] Confirm episode resolution via `ParentIds` + `ParentIndexNumber` + `IndexNumber`
+- [ ] Confirm episode resolution via `AncestorIds` + `ParentIndexNumber` + `IndexNumber`
 
-### Phase 3 — HTTP API
-- [ ] Implement `Services/ExportPlaylistRequest.cs`
-- [ ] Implement `Services/ImportPlaylistRequest.cs`
-- [ ] Implement `Services/PlaylistApi.cs`
-- [ ] Test endpoints via Emby API browser
+### Phase 3 — HTTP API (deferred)
+- [ ] `Services/ExportPlaylistRequest.cs`
+- [ ] `Services/ImportPlaylistRequest.cs`
+- [ ] `Services/PlaylistApi.cs`
+- [ ] Test via Emby API browser
 
-### Phase 4 — UI Enhancement
-- [ ] Add `ButtonItem` fields to `PluginOptions` for triggering export/import
-- [ ] Add `StatusItem` for operation feedback
-- [ ] If live progress needed: upgrade to full `IHasUIPages` + `PluginPageView` pattern
-
-### Phase 5 — Polish
-- [ ] Add `ThumbImage.png` as embedded resource
-- [ ] Generate a real plugin GUID
+### Phase 4 — Polish
+- [ ] Add real `ThumbImage.png` as embedded resource
 - [ ] Update README with usage instructions
