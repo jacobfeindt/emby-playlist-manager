@@ -1,8 +1,8 @@
-using EmbyPlaylistMigration.UIBaseClasses.Store;
+using EmbyPlaylistManager.UIBaseClasses.Store;
 using MediaBrowser.Common;
 using MediaBrowser.Model.Logging;
 
-namespace EmbyPlaylistMigration.Storage
+namespace EmbyPlaylistManager.Storage
 {
     public class OptionsStore : SimpleFileStore<PluginOptions>
     {

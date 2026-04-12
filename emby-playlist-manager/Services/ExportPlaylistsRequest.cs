@@ -1,9 +1,9 @@
 using MediaBrowser.Controller.Net;
 using MediaBrowser.Model.Services;
 
-namespace EmbyPlaylistMigration.Services
+namespace EmbyPlaylistManager.Services
 {
-    [Route("/PlaylistMigration/Export", "GET", Summary = "Exports all playlists to a JSON file")]
+    [Route("/PlaylistManager/Export", "GET", Summary = "Exports all playlists to a JSON file")]
     [Authenticated(Roles = "Admin")]
     public class ExportPlaylistsRequest : IReturn<ExportPlaylistsResponse>
     {

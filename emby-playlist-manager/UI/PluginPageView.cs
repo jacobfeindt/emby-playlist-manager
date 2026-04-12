@@ -6,8 +6,8 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using Emby.Web.GenericEdit.Elements;
 using Emby.Web.GenericEdit.Elements.List;
-using EmbyPlaylistMigration.Models;
-using EmbyPlaylistMigration.Storage;
+using EmbyPlaylistManager.Models;
+using EmbyPlaylistManager.Storage;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
@@ -15,7 +15,7 @@ using MediaBrowser.Model.Logging;
 using MediaBrowser.Model.Plugins;
 using MediaBrowser.Model.Plugins.UI.Views;
 
-namespace EmbyPlaylistMigration.UI
+namespace EmbyPlaylistManager.UI
 {
     internal class PluginPageView : UIBaseClasses.Views.PluginPageView
     {

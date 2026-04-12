@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace EmbyPlaylistMigration.Models
+namespace EmbyPlaylistManager.Models
 {
     public class PlaylistExportDto
     {

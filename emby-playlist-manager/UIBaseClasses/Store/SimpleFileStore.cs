@@ -7,7 +7,7 @@ using MediaBrowser.Model.IO;
 using MediaBrowser.Model.Logging;
 using MediaBrowser.Model.Serialization;
 
-namespace EmbyPlaylistMigration.UIBaseClasses.Store
+namespace EmbyPlaylistManager.UIBaseClasses.Store
 {
     public class SimpleFileStore<TOptionType> : SimpleContentStore<TOptionType>
         where TOptionType : EditableOptionsBase, new()

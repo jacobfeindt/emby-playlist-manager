@@ -6,12 +6,12 @@ using Emby.Web.GenericEdit.Elements.List;
 using Emby.Web.GenericEdit.Validation;
 using MediaBrowser.Model.Attributes;
 
-namespace EmbyPlaylistMigration
+namespace EmbyPlaylistManager
 {
     public class PluginOptions : EditableOptionsBase
     {
-        public override string EditorTitle => "Playlist Export Import";
-        public override string EditorDescription => "Export all playlists to a portable JSON file and import them on any Emby server using IMDb/TMDb IDs.";
+        public override string EditorTitle => "Playlist Manager";
+        public override string EditorDescription => "Export, import, and repair Emby playlists using IMDb/TMDb IDs for portability across servers.";
 
         // --- Export ---
         public CaptionItem ExportCaption { get; set; } = new CaptionItem("Export");

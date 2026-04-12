@@ -4,7 +4,7 @@ using MediaBrowser.Model.Plugins;
 using MediaBrowser.Model.Plugins.UI;
 using MediaBrowser.Model.Plugins.UI.Views;
 
-namespace EmbyPlaylistMigration.UIBaseClasses
+namespace EmbyPlaylistManager.UIBaseClasses
 {
     public abstract class ControllerBase : IPluginUIPageController
     {

@@ -1,8 +1,8 @@
-# Emby Playlist Export/Import Plugin – Implementation Plan
+# Emby Playlist Manager – Implementation Plan
 
 ## Objective
 
-A fully functional Emby Server plugin that exports and imports playlists using provider IDs (IMDb/TMDb), making playlists portable across systems (e.g., Windows → Linux migrations). Includes a native Emby plugin UI for configuration and triggering operations.
+A fully functional Emby Server plugin for managing playlists — export, import, and repair using provider IDs (IMDb/TMDb), making playlists portable across systems.
 
 ---
 
@@ -305,7 +305,7 @@ Constructor receives `ILibraryManager`, `IPlaylistManager`, `ILogger`.
 
 ### Phase 1 — Project Foundation ✅ Complete
 - [x] `net8.0` + direct DLL references to Emby Server system folder
-- [x] `Plugin.cs` as `BasePlugin` + `IHasUIPages` — GUID: `7b3d3243-e854-4aaf-9636-1505fdd78d6c`
+- [x] `Plugin.cs` as `BasePlugin` + `IHasUIPages` — GUID: `7b3d3243-e854-4aaf-9636-1505fdd78d6c`, Name: `Playlist Manager`
 - [x] Full `IHasUIPages` + `PluginPageView` UI pattern
 - [x] `PluginOptions.cs` with export/import fields, buttons, status, preview list
 - [x] `PlaylistService.cs` with correct API signatures
@@ -333,3 +333,71 @@ Constructor receives `ILibraryManager`, `IPlaylistManager`, `ILogger`.
 ### Phase 4 — Polish ✅ Complete
 - [x] Real `ThumbImage.png` embedded resource
 - [x] README updated with full usage, API docs, JSON format, known limitations
+- [x] Renamed `implementaiton_plan.md` → `implementation_plan.md`
+
+---
+
+## Planned Enhancements
+
+### Phase 5 — Playlist Repair
+
+When library paths change (e.g. Sonarr renames a TV show folder, or media is moved), Emby loses the link to items in existing playlists. Repair uses a previously exported JSON file as the source of truth to re-resolve and rebuild the contents of existing playlists.
+
+#### Behavior
+- Select a repair source file (same `List<PlaylistExportDto>` format as import)
+- For each playlist in the file, find the matching playlist on the server by name
+- Re-resolve every item by provider ID against the current library
+- Replace the playlist contents with the newly resolved items
+- Report: resolved, missing, unchanged per playlist
+
+#### UI additions
+```
+[Repair]
+  RepairFilePath       — file picker [AutoPostBack] — preview loads automatically
+  Playlists in File    — GenericItemList showing each playlist and match status
+                         (green = found on server, yellow = not found/will be skipped)
+  [ Repair Playlists ] — rebuilds matched playlists from current library
+```
+
+#### Service additions
+- `PlaylistService.RepairPlaylists(User, List<PlaylistExportDto>)` — for each matched playlist:
+  1. `RemoveFromPlaylist` all existing items
+  2. Re-resolve each item by provider ID
+  3. `AddToPlaylist` resolved items
+  4. Log per-item and per-playlist summary
+- HTTP API: `POST /PlaylistMigration/Repair` — same body as Import
+
+#### Notes
+- Repair only operates on playlists that already exist by name — it never creates new ones
+- Items that cannot be resolved are logged as missing but do not abort the repair
+- A pre-repair export is recommended as a backup
+
+---
+
+### Phase 6 — Import Collision Options
+
+Currently import always skips playlists whose name already exists. Add a configurable collision handling mode.
+
+#### Modes
+
+| Mode | Behavior |
+|---|---|
+| `Skip` | Current behavior — existing playlists are not touched (default) |
+| `Overwrite` | Clear the existing playlist and rebuild it from the import file |
+| `AutoRename` | Create a new playlist with a suffixed name: `Playlist (1)`, `Playlist (2)`, etc. |
+
+#### UI additions
+- `CollisionMode` enum dropdown on the options page (applies globally to all imports)
+- Preview list updates to reflect the selected mode — e.g. Overwrite shows as Warning instead of skipped
+
+#### Service changes
+- `ImportPlaylists` accepts a `CollisionMode` parameter
+- `Overwrite`: find existing playlist by name → `RemoveFromPlaylist` all items → re-add resolved items
+- `AutoRename`: generate unique name before calling `CreatePlaylist`
+- HTTP API: `POST /PlaylistMigration/Import` accepts optional `collisionMode` query param
+
+---
+
+### Known Bug — File Picker Navigation (Item 3)
+
+When `ImportFilePath` has a saved value, the `[EditFilePicker]` control pre-populates with the full path including filename. Navigating to a different file requires manually clearing the filename portion before the folder browser will show directory contents. This is a GenericEdit framework behavior — no direct fix available without a custom editor.

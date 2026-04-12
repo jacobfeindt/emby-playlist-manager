@@ -1,6 +1,6 @@
-# Emby Playlist Export/Import Plugin
+# Emby Playlist Manager Plugin
 
-An Emby Server plugin that exports and imports playlists using provider IDs (IMDb/TMDb) instead of file paths, making playlists fully portable across systems (e.g., Windows → Linux migrations).
+An Emby Server plugin for managing playlists — export, import, and repair using provider IDs (IMDb/TMDb), making playlists fully portable across systems (e.g., Windows → Linux migrations).
 
 ## Features
 
@@ -62,10 +62,10 @@ This project references DLLs directly from an Emby Server `system` folder rather
 ### Building
 
 ```bash
-dotnet build emby-playlist-export-import.csproj
+dotnet build EmbyPlaylistManager.csproj
 ```
 
-Output: `bin\Debug\net8.0\EmbyPlaylistMigration.dll`
+Output: `bin\Debug\net8.0\EmbyPlaylistManager.dll`
 
 The PostBuild step automatically copies the DLL to `%AppData%\Emby-Server\programdata\plugins\` on build.
 
@@ -73,7 +73,7 @@ The PostBuild step automatically copies the DLL to `%AppData%\Emby-Server\progra
 
 ### Via Plugin UI
 
-1. Open Emby Dashboard → Plugins → Playlist Export Import
+1. Open Emby Dashboard → Plugins → Playlist Manager
 2. **Export**: Set the output folder, click **Export All Playlists**
    - Creates `{ServerName}-playlists-{timestamp}.json` in the output folder
 3. **Import**: Select the JSON file using the file picker
@@ -84,8 +84,8 @@ The PostBuild step automatically copies the DLL to `%AppData%\Emby-Server\progra
 
 **Export** — exports all playlists and writes a JSON file to the configured output folder:
 ```
-GET /PlaylistMigration/Export
-GET /PlaylistMigration/Export?OutputFolder=C:\exports
+GET /PlaylistManager/Export
+GET /PlaylistManager/Export?OutputFolder=C:\exports
 Authorization: MediaBrowser Token="your-api-key"
 ```
 
@@ -96,7 +96,7 @@ Response:
 
 **Import** — imports playlists from a JSON body, skipping any that already exist by name:
 ```
-POST /PlaylistMigration/Import
+POST /PlaylistManager/Import
 Authorization: MediaBrowser Token="your-api-key"
 Content-Type: application/json
 

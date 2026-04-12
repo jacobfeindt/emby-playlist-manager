@@ -2,8 +2,8 @@
 
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
-    <AssemblyName>EmbyPlaylistMigration</AssemblyName>
-    <RootNamespace>EmbyPlaylistMigration</RootNamespace>
+    <AssemblyName>EmbyPlaylistManager</AssemblyName>
+    <RootNamespace>EmbyPlaylistManager</RootNamespace>
     <AssemblyVersion>1.0.0.0</AssemblyVersion>
     <FileVersion>1.0.0.0</FileVersion>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>

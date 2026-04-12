@@ -1,7 +1,7 @@
 using System;
 using Emby.Web.GenericEdit;
 
-namespace EmbyPlaylistMigration.UIBaseClasses.Store
+namespace EmbyPlaylistManager.UIBaseClasses.Store
 {
     public class SimpleContentStore<TOptionType>
         where TOptionType : EditableOptionsBase, new()

@@ -1,11 +1,11 @@
 using System.Collections.Generic;
-using EmbyPlaylistMigration.Models;
+using EmbyPlaylistManager.Models;
 using MediaBrowser.Controller.Net;
 using MediaBrowser.Model.Services;
 
-namespace EmbyPlaylistMigration.Services
+namespace EmbyPlaylistManager.Services
 {
-    [Route("/PlaylistMigration/Import", "POST", Summary = "Imports playlists from a JSON body")]
+    [Route("/PlaylistManager/Import", "POST", Summary = "Imports playlists from a JSON body")]
     [Authenticated(Roles = "Admin")]
     public class ImportPlaylistsRequest : IReturn<ImportPlaylistsResponse>
     {

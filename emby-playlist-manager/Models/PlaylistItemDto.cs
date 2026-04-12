@@ -1,4 +1,4 @@
-namespace EmbyPlaylistMigration.Models
+namespace EmbyPlaylistManager.Models
 {
     public class PlaylistItemDto
     {

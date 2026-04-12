@@ -3,21 +3,21 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
-using EmbyPlaylistMigration.Models;
+using EmbyPlaylistManager.Models;
 using MediaBrowser.Common;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Net;
 using MediaBrowser.Model.Services;
 
-namespace EmbyPlaylistMigration.Services
+namespace EmbyPlaylistManager.Services
 {
     [Authenticated]
-    public class PlaylistMigrationApi : IService
+    public class PlaylistManagerApi : IService
     {
         private readonly IApplicationHost _appHost;
         private readonly IUserManager _userManager;
 
-        public PlaylistMigrationApi(IApplicationHost appHost, IUserManager userManager)
+        public PlaylistManagerApi(IApplicationHost appHost, IUserManager userManager)
         {
             _appHost = appHost;
             _userManager = userManager;
@@ -25,7 +25,7 @@ namespace EmbyPlaylistMigration.Services
 
         private Plugin GetPlugin() =>
             _appHost.Plugins.OfType<Plugin>().FirstOrDefault()
-            ?? throw new InvalidOperationException("Playlist Export Import plugin is not loaded.");
+            ?? throw new InvalidOperationException("Playlist Manager plugin is not loaded.");
 
         public async Task<ExportPlaylistsResponse> Get(ExportPlaylistsRequest request)
         {

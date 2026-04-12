@@ -6,7 +6,7 @@ using MediaBrowser.Model.GenericEdit;
 using MediaBrowser.Model.Plugins.UI.Views;
 using MediaBrowser.Model.Plugins.UI.Views.Enums;
 
-namespace EmbyPlaylistMigration.UIBaseClasses.Views
+namespace EmbyPlaylistManager.UIBaseClasses.Views
 {
     internal abstract class PluginViewBase : IPluginUIView, IPluginViewWithOptions
     {

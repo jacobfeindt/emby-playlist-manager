@@ -1,13 +1,13 @@
 using System.Threading.Tasks;
-using EmbyPlaylistMigration.Storage;
-using EmbyPlaylistMigration.UIBaseClasses;
+using EmbyPlaylistManager.Storage;
+using EmbyPlaylistManager.UIBaseClasses;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Logging;
 using MediaBrowser.Model.Plugins;
 using MediaBrowser.Model.Plugins.UI.Views;
 
-namespace EmbyPlaylistMigration.UI
+namespace EmbyPlaylistManager.UI
 {
     internal class PageController : ControllerBase
     {
@@ -39,9 +39,9 @@ namespace EmbyPlaylistMigration.UI
 
             this.PageInfo = new PluginPageInfo
             {
-                Name = "PlaylistMigrationMainPage",
+                Name = "PlaylistManagerMainPage",
                 EnableInMainMenu = true,
-                DisplayName = "Playlist Export Import",
+                DisplayName = "Playlist Manager",
                 MenuIcon = "import_export",
                 IsMainConfigPage = true,
             };

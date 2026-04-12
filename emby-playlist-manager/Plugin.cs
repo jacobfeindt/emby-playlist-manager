@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using EmbyPlaylistMigration.Storage;
-using EmbyPlaylistMigration.UI;
+using EmbyPlaylistManager.Storage;
+using EmbyPlaylistManager.UI;
 using MediaBrowser.Common.Plugins;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Library;
@@ -12,11 +12,11 @@ using MediaBrowser.Model.Logging;
 using MediaBrowser.Model.Plugins;
 using MediaBrowser.Model.Plugins.UI;
 
-namespace EmbyPlaylistMigration
+namespace EmbyPlaylistManager
 {
     public class Plugin : BasePlugin, IHasThumbImage, IHasUIPages, IHasPluginConfiguration
     {
-        public const string PluginName = "Playlist Export Import";
+        public const string PluginName = "Playlist Manager";
         private readonly Guid _id = new Guid("7b3d3243-e854-4aaf-9636-1505fdd78d6c");
 
         private readonly IServerApplicationHost _appHost;
@@ -41,11 +41,11 @@ namespace EmbyPlaylistMigration
             _logger = logManager.GetLogger(PluginName);
             _optionsStore = new OptionsStore(appHost, _logger, PluginName);
             _playlistService = new PlaylistService(libraryManager, playlistManager, _logger);
-            _logger.Info("Playlist Export Import plugin loaded.");
+            _logger.Info("Playlist Manager plugin loaded.");
         }
 
         public override string Name => PluginName;
-        public override string Description => "Export and import playlists using provider IDs (IMDb/TMDb) for portability across Emby servers.";
+        public override string Description => "Manage Emby playlists — export, import, and repair using provider IDs (IMDb/TMDb) for portability across servers.";
         public override Guid Id => _id;
 
         public ImageFormat ThumbImageFormat => ImageFormat.Png;

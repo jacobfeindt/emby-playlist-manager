@@ -2,13 +2,13 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using EmbyPlaylistMigration.Models;
+using EmbyPlaylistManager.Models;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Playlists;
 using MediaBrowser.Model.Logging;
 
-namespace EmbyPlaylistMigration
+namespace EmbyPlaylistManager
 {
     public class PlaylistService
     {
