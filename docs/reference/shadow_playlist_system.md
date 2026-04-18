@@ -157,6 +157,58 @@ bool IsPresent(PlaylistItemDto shadowItem, IEnumerable<BaseItem> liveItems)
 
 ---
 
+## Fault Tolerance
+
+The shadow system must never impact Emby's normal operation. It is a background observer — if it fails, Emby carries on.
+
+- All event handlers wrap their entire body in `try/catch` — exceptions are logged as `Error` and swallowed
+- All file I/O (shadow reads/writes) is wrapped in `try/catch` — a corrupt or locked shadow file must not abort the handler
+- Shadow writes are fire-and-forget where possible — use `Task.Run(() => { try { ... } catch { ... } })` to get off the event thread immediately
+- `InitializeAllShadows` on startup runs on a background thread — never blocks plugin load
+- Repair operations (scan and execute) run on background threads — never block the UI or event thread
+- `ItemUpdated` debounce must not accumulate unbounded work — cap the pending queue and drop excess events
+- If the shadow folder is missing or unwritable, log a single `Error` on startup and disable the shadow system gracefully rather than retrying on every event
+
+---
+
+## Logging
+
+All shadow and repair activity logs through Emby's `ILogger` under the plugin name. Levels:
+
+### Shadow updates (on every playlist event)
+```
+Info  Shadow updated: '{PlaylistName}' ({N} items) [triggered by PlaylistItemsAdded]
+Info    + Added:   'Item Name' [Imdb=tt1234567, Tmdb=12345]
+Info    - Removed: 'Item Name' [Imdb=tt1234567]
+Info    ~ Moved:   'Item Name' (index 2 → 5)
+Info  Shadow initialized: {N} playlists written on startup
+```
+
+### Repair scan
+```
+Info  Repair scan started. {N} shadow files found.
+Info  Playlist 'Christmas Shows': {N} live items, {N} shadow items
+Info    Broken: 'Home Alone' — not in live playlist [Imdb=tt0099785, Tmdb=771]
+Info    OK:     'Elf' — present in live playlist
+Info  Playlist 'Christmas Shows': {broken} broken, {ok} ok
+Info  Repair scan complete. {total_broken} broken items across {N} playlists.
+```
+
+### Repair execution
+```
+Info  Repair started. {N} broken items to fix.
+Info    Fixed:   'Home Alone' — re-resolved via Imdb=tt0099785, added to 'Christmas Shows'
+Warn    Missing: 'Rudolph' — not found in library [Imdb=tt0060345, Tmdb=11360]
+Info  Repair complete. Fixed: {N}, Still missing: {N}.
+```
+
+### Event discovery (Phase 7a only — remove after confirming args)
+```
+Debug PlaylistItemsAdded args: Playlist='{name}' InternalId={id} [log any other visible properties]
+```
+
+---
+
 ## Scheduled Task
 
 See supplemental guide § *IScheduledTask* for the full confirmed signature including `Key` property and `TaskTriggerInfo` constants. `IScheduledTask` is in `MediaBrowser.Model.dll`.
@@ -212,30 +264,43 @@ On plugin load (in `IServerEntryPoint.Run()`):
 
 ## Implementation Phases
 
-### Phase 7a — Shadow Infrastructure
-- [ ] `EnableShadow` bool toggle in `PluginOptions` (default: off)
-- [ ] `PluginEntryPoint.cs` implementing `IServerEntryPoint` — subscribes to events when enabled
-- [ ] `ShadowPlaylistService.cs` — read/write/delete shadow files, `InitializeAllShadows`
-- [ ] Shadow stored at `appPaths.DataPath\PlaylistManager\shadows\{PlaylistName}-{PlaylistId}.json`
-- [ ] Verify shadow files created and updated correctly on live server
-- [ ] Discover actual event args properties at runtime — log `e.Playlist.Name`, `e.Playlist.InternalId`, and any other properties visible in the debugger/logs on first live event, then update the supplemental guide
+### Phase 7a — Shadow Infrastructure ✅ Complete
+- [x] `EnableShadow` bool toggle in `PluginOptions` (default: off)
+- [x] `PluginEntryPoint.cs` implementing `IServerEntryPoint` — subscribes to events when enabled
+- [x] `ShadowPlaylistService.cs` — read/write/delete shadow files, `InitializeAllShadows`
+- [x] Shadow stored at `appPaths.DataPath\PlaylistManager\shadows\{PlaylistName}-{PlaylistId}.json`
+- [x] All event handlers wrapped in `try/catch` — exceptions logged and swallowed, never rethrown
+- [x] Shadow writes via `Task.Run` — off the event thread immediately
+- [x] `InitializeAllShadows` runs on background thread — never blocks plugin load
+- [x] Shadow folder missing/unwritable — logs single `Error`, disables gracefully
+- [x] Log shadow update per event: playlist name, item count, trigger event name
+- [x] Log `Debug` line on each event firing with playlist name and InternalId (event discovery)
+- [ ] Deploy to live server — verify shadow files created and updated correctly
+- [ ] After first live event: confirm args properties, update supplemental guide, remove debug logging
 
-### Phase 7b — Repair Logic
-- [ ] `RepairPlaylists(User)` in `PlaylistService` — diff shadow vs live, re-resolve broken items
-- [ ] `IsPresent` provider ID comparison
-- [ ] Per-item and per-playlist logging
+### Phase 7b — Repair Logic ✅ Complete
+- [x] `HandleScan` in `PluginPageView` — diffs shadow vs live, populates `RepairPreviewList`
+- [x] `HandleRepairAll` in `PluginPageView` — re-resolves broken items, adds back to playlist
+- [x] `IsPresent` provider ID comparison (any key match)
+- [x] Per-item logging: broken/ok/fixed/still-missing with all provider IDs
+- [x] Per-playlist and overall summary logging
 - [ ] HTTP API: `POST /PlaylistManager/Repair`
 
-### Phase 7c — Scheduled Task
-- [ ] `PlaylistRepairTask` implementing `IScheduledTask` (in `MediaBrowser.Model.dll`)
-- [ ] Exits immediately if `EnableShadow` is off
-- [ ] Default trigger: weekly Sunday 3am
-- [ ] Report-only mode vs auto-repair mode
+### Phase 7c — Scheduled Task ✅ Complete
+- [x] `PlaylistRepairTask` implementing `IScheduledTask` (`MediaBrowser.Model.Tasks`)
+- [x] Resolves `Plugin` via `IApplicationHost` — exits immediately if `EnableShadow` is off
+- [x] Default trigger: weekly Sunday 3am
+- [x] Per-playlist and per-item logging matching the logging spec
+- [x] `CancellationToken` respected — per-playlist and per-item checks
+- [x] `progress.Report` at each playlist step
+- [x] Per-playlist `try/catch` — one bad playlist never aborts the whole run
+- [x] `OperationCanceledException` re-thrown correctly
 
-### Phase 7d — UI
-- [ ] Shadow section in `PluginOptions` with `EnableShadow` toggle
-- [ ] Scan and Repair All buttons (disabled when `EnableShadow` is off)
-- [ ] `RepairPreviewList` populated by Scan
+### Phase 7d — UI ✅ Complete
+- [x] Shadow section in `PluginOptions` with `EnableShadow` toggle
+- [x] `RepairPreviewList`, `ScanButton`, `RepairAllButton`, `ShadowStatus`
+- [x] Scan and Repair All buttons disabled during in-progress operations
+- [x] `OnSaveCommand` reflects `EnableShadow` state in `ShadowStatus`
 
 ---
 
@@ -248,3 +313,5 @@ On plugin load (in `IServerEntryPoint.Run()`):
 3. **ItemUpdated debounce** — fires on every library scan item. Filter to only items whose provider IDs appear in any shadow file before doing any work. Consider a short debounce window (e.g. 30s) to batch rapid-fire scan events.
 
 4. **User context for repair** — `GetItemList` needs a `User`. Since playlists are now always imported as public (`IsPublic = true`), repair can use the first admin user. Confirmed: `OwnerUserId` does not exist on `Playlist` — there is no per-playlist owner to look up.
+
+5. **Shadow backup copy** — resolved. Master store is `data\PlaylistManager\shadows\`. Backup copies written to `data\userplaylists\*.shadow.json` on every update — confirmed picked up by MBBackup. On startup, if master is empty but backup copies exist (post-restore), they are automatically promoted back to master. Sync also runs on startup to ensure all masters have a backup copy.
