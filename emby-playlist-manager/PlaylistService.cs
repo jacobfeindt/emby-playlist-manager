@@ -26,6 +26,11 @@ namespace EmbyPlaylistManager
             _logger = logger;
         }
 
+        public void AddToPlaylist(long playlistInternalId, BaseItem item, User user)
+        {
+            _playlistManager.AddToPlaylist(playlistInternalId, new[] { item.InternalId }, user);
+        }
+
         public HashSet<string> GetExistingPlaylistNames(User user)
         {
             var existing = _libraryManager.GetItemList(new InternalItemsQuery(user)
@@ -203,7 +208,8 @@ namespace EmbyPlaylistManager
 
                     // Try each provider ID in priority order: Imdb first, Tmdb second, then anything else
                     var prioritized = dto.ProviderIds
-                        .OrderBy(k => k.Key == "Imdb" ? 0 : k.Key == "Tmdb" ? 1 : 2);
+                        .OrderBy(k => k.Key.Equals("Imdb", StringComparison.OrdinalIgnoreCase) ? 0 :
+                                      k.Key.Equals("Tmdb", StringComparison.OrdinalIgnoreCase) ? 1 : 2);
 
                     foreach (var providerId in prioritized)
                     {

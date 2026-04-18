@@ -63,10 +63,17 @@ string shadowDir = Path.Combine(appPaths.DataPath, "PlaylistManager", "shadows")
 Confirmed in `Emby.Server.Connect.dll` (example implementation). Interface is in `MediaBrowser.Controller.dll`. `Run()` is the correct place to subscribe to `IPlaylistManager` and `ILibraryManager` events for the shadow system.
 
 ```csharp
-public class PluginStartup : IServerEntryPoint
+public class PluginEntryPoint : IServerEntryPoint
 {
-    public Task Run() { /* subscribe to events here */ return Task.CompletedTask; }
-    public void Dispose() { /* unsubscribe */ }
+    public void Run()   // void — NOT Task (confirmed by build)
+    {
+        // Subscribe to events here
+    }
+
+    public void Dispose()
+    {
+        // Unsubscribe
+    }
 }
 ```
 
