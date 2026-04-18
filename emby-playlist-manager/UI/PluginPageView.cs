@@ -58,9 +58,29 @@ namespace EmbyPlaylistManager.UI
             switch (commandId)
             {
                 case "Export":
+                    if (string.IsNullOrWhiteSpace(this.Options.ExportFolder))
+                    {
+                        SetStatus("Export failed: Output folder is required.", ItemStatus.Failed);
+                        return Task.FromResult<IPluginUIView>(this);
+                    }
+                    if (!Directory.Exists(this.Options.ExportFolder))
+                    {
+                        SetStatus("Export failed: Output folder does not exist.", ItemStatus.Failed);
+                        return Task.FromResult<IPluginUIView>(this);
+                    }
+                    if (!IsDirectoryWritable(this.Options.ExportFolder))
+                    {
+                        SetStatus("Export failed: Output folder is not writable.", ItemStatus.Failed);
+                        return Task.FromResult<IPluginUIView>(this);
+                    }
                     Task.Run(HandleExport);
                     return Task.FromResult<IPluginUIView>(this);
                 case "Import":
+                    if (string.IsNullOrWhiteSpace(this.Options.ImportFilePath))
+                    {
+                        SetStatus("Import failed: File path is required.", ItemStatus.Failed);
+                        return Task.FromResult<IPluginUIView>(this);
+                    }
                     Task.Run(HandleImport);
                     return Task.FromResult<IPluginUIView>(this);
                 case "Preview":
@@ -83,6 +103,9 @@ namespace EmbyPlaylistManager.UI
         private void HandlePreview()
         {
             this.Options.PreviewList.Clear();
+            this.Options.SelectedFileLabel.Text = string.IsNullOrEmpty(this.Options.ImportFilePath)
+                ? "No file selected."
+                : this.Options.ImportFilePath;
 
             if (string.IsNullOrWhiteSpace(this.Options.ImportFilePath) || !File.Exists(this.Options.ImportFilePath))
             {
@@ -110,7 +133,7 @@ namespace EmbyPlaylistManager.UI
                     var exists = existingNames.Contains(playlist.PlaylistName, StringComparer.OrdinalIgnoreCase);
                     string secondaryText;
                     ItemStatus status;
-                    string icon;
+                    IconNames? icon;
 
                     if (!exists)
                     {
@@ -263,6 +286,20 @@ namespace EmbyPlaylistManager.UI
             this.Options.ExportButton.IsEnabled = status != ItemStatus.InProgress;
             this.Options.ImportButton.IsEnabled = status != ItemStatus.InProgress;
             RaiseUIViewInfoChanged();
+        }
+
+        private static bool IsDirectoryWritable(string path)
+        {
+            try
+            {
+                var testFile = Path.Combine(path, Path.GetRandomFileName());
+                using (File.Create(testFile, 1, FileOptions.DeleteOnClose)) { }
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
         }
     }
 }

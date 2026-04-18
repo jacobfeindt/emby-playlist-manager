@@ -1,5 +1,20 @@
 # Emby Playlist Manager – Shadow Playlist System
 
+## Context for a fresh session
+
+Read these four documents together before implementing:
+
+| Document | Path |
+|---|---|
+| Implementation Plan | `C:\Git\emby-playlist-manager\docs\reference\implementation_plan.md` |
+| SDK Primary Guide | `C:\Git\emby-playlist-manager\docs\reference\emby-sdk-primary-guide.md` |
+| SDK Supplemental Guide | `C:\Git\emby-playlist-manager\docs\reference\emby-sdk-supplemental-guide.md` |
+| This document | `C:\Git\emby-playlist-manager\docs\reference\shadow_playlist_system.md` |
+
+The primary guide contains confirmed namespaces, assembly map, and all interface signatures. The supplemental guide contains gotchas, patterns, and plugin-specific findings. Do not re-derive these from scratch.
+
+---
+
 ## Overview
 
 The shadow playlist system maintains a continuously updated JSON copy of every Emby playlist. This enables playlist repair without requiring a manual export — the shadow is always current because it updates in response to live Emby events rather than on a timer.
@@ -41,18 +56,23 @@ Each file is a single `PlaylistExportDto` object (not a list — one file per pl
 
 ### Event Subscriptions
 
-Subscribe in `Plugin.Run()` (via `IServerEntryPoint` or constructor):
+Subscribe in `IServerEntryPoint.Run()` — confirmed correct pattern (see supplemental guide):
 
-| Event | Source | Action |
-|---|---|---|
-| `PlaylistItemsAdded` | `IPlaylistManager` | Re-export affected playlist to shadow |
-| `PlaylistItemsRemoved` | `IPlaylistManager` | Re-export affected playlist to shadow |
-| `PlaylistItemsMoved` | `IPlaylistManager` | Re-export affected playlist to shadow |
-| `ItemUpdated` | `ILibraryManager` | Check if item appears in any shadow; if so flag for repair scan |
+| Event | Source | Confirmed In | Action |
+|---|---|---|---|
+| `PlaylistItemsAdded` | `IPlaylistManager` | `Emby.Server.Implementations.dll` | Re-export affected playlist to shadow |
+| `PlaylistItemsRemoved` | `IPlaylistManager` | `Emby.Server.Implementations.dll` | Re-export affected playlist to shadow |
+| `PlaylistItemsMoved` | `IPlaylistManager` | `Emby.Server.Implementations.dll` | Re-export affected playlist to shadow |
+| `ItemAdded` | `ILibraryManager` | `Emby.Server.Implementations.dll` | Check if new item resolves any missing shadow entries |
+| `ItemUpdated` | `ILibraryManager` | `Emby.Server.Implementations.dll` | Same — but fires very frequently, must debounce/filter |
+
+Event args carry a `.Playlist` property (confirmed via XML docs). Additional properties (e.g. which item IDs changed) are undocumented — discover at runtime by logging the args object on first run.
+
+Note: `Plugin.Run()` via constructor is **not** the right pattern — use `IServerEntryPoint.Run()` as a separate class.
 
 ### Shadow Service
 
-New `ShadowPlaylistService` class:
+New `ShadowPlaylistService` class. Constructor should receive `IApplicationHost` (to resolve `IApplicationPaths` and `IJsonSerializer`) and `ILogger` — see supplemental guide § *Resolve additional services at runtime* and § *Plugin paths* for the `DataPath` pattern.
 
 ```csharp
 public class ShadowPlaylistService
@@ -119,7 +139,7 @@ bool IsPresent(PlaylistItemDto shadowItem, IEnumerable<BaseItem> liveItems)
 
 ## Scheduled Task
 
-Register as an Emby scheduled task so it appears in Dashboard → Scheduled Tasks alongside Backup/Restore.
+See supplemental guide § *IScheduledTask* for the full confirmed signature including `Key` property and `TaskTriggerInfo` constants. `IScheduledTask` is in `MediaBrowser.Model.dll`.
 
 ```csharp
 public class PlaylistRepairTask : IScheduledTask
@@ -127,6 +147,7 @@ public class PlaylistRepairTask : IScheduledTask
     public string Name => "Playlist Manager: Repair Broken Links";
     public string Description => "Scans all playlists for broken item links and repairs them using the shadow playlist store.";
     public string Category => "Playlist Manager";
+    public string Key => "PlaylistManagerRepair";
 
     public IEnumerable<TaskTriggerInfo> GetDefaultTriggers() => new[]
     {
@@ -139,46 +160,45 @@ public class PlaylistRepairTask : IScheduledTask
 
 ---
 
-## UI Additions
+## UI
 
-### New Repair section in PluginOptions
+### Shadow section in PluginOptions
 
 ```
-[Repair]
-  Shadow Folder        — folder picker (where shadow files are stored, default = programdata)
+[Shadow Playlists]
+  EnableShadow         — bool toggle (default: off) — master on/off for the entire shadow system
   RepairPreviewList    — GenericItemList showing broken items found across all playlists
   [ Scan for Issues ]  — button: scans without repairing, populates preview list
   [ Repair All ]       — button: repairs all broken links found
 ```
 
-### Preview list item format
-
-```
-playlist_add  Christmas Shows
-              Home Alone — will be repaired (found in library)
-
-warning       Christmas Shows  
-              Rudolph — still missing (not found in library)
-```
+When `EnableShadow` is off:
+- No event subscriptions are made
+- No shadow files are written
+- Scan and Repair buttons are disabled
+- Scheduled task still appears in Dashboard but exits immediately if shadow is disabled
 
 ---
 
 ## Startup Behavior
 
-On plugin load:
-1. Subscribe to all playlist and library events
-2. If shadow folder is empty, run `InitializeAllShadows` to build initial state from current playlists
-3. Log shadow count
+On plugin load (in `IServerEntryPoint.Run()`):
+1. Check `EnableShadow` — if off, return immediately
+2. Subscribe to `PlaylistItemsAdded`, `PlaylistItemsRemoved`, `PlaylistItemsMoved`, `ItemAdded`, `ItemUpdated`
+3. If shadow folder is empty, run `InitializeAllShadows` to build initial state from current playlists
+4. Log shadow count
 
 ---
 
 ## Implementation Phases
 
 ### Phase 7a — Shadow Infrastructure
-- [ ] `ShadowPlaylistService.cs` — read/write/delete shadow files
-- [ ] Subscribe to `PlaylistItemsAdded`, `PlaylistItemsRemoved`, `PlaylistItemsMoved` in `Plugin.cs`
-- [ ] `InitializeAllShadows` on startup
-- [ ] Verify shadow files are created and updated correctly
+- [ ] `EnableShadow` bool toggle in `PluginOptions` (default: off)
+- [ ] `PluginEntryPoint.cs` implementing `IServerEntryPoint` — subscribes to events when enabled
+- [ ] `ShadowPlaylistService.cs` — read/write/delete shadow files, `InitializeAllShadows`
+- [ ] Shadow stored at `appPaths.DataPath\PlaylistManager\shadows\{PlaylistName}-{PlaylistId}.json`
+- [ ] Verify shadow files created and updated correctly on live server
+- [ ] Discover actual event args properties at runtime — log `e.Playlist.Name`, `e.Playlist.InternalId`, and any other properties visible in the debugger/logs on first live event, then update the supplemental guide
 
 ### Phase 7b — Repair Logic
 - [ ] `RepairPlaylists(User)` in `PlaylistService` — diff shadow vs live, re-resolve broken items
@@ -187,25 +207,24 @@ On plugin load:
 - [ ] HTTP API: `POST /PlaylistManager/Repair`
 
 ### Phase 7c — Scheduled Task
-- [ ] `PlaylistRepairTask` implementing `IScheduledTask`
-- [ ] Register in Emby scheduled tasks
-- [ ] Configurable trigger (default: weekly Sunday 3am)
+- [ ] `PlaylistRepairTask` implementing `IScheduledTask` (in `MediaBrowser.Model.dll`)
+- [ ] Exits immediately if `EnableShadow` is off
+- [ ] Default trigger: weekly Sunday 3am
 - [ ] Report-only mode vs auto-repair mode
 
 ### Phase 7d — UI
-- [ ] Repair section in `PluginOptions`
-- [ ] Scan button populates `RepairPreviewList`
-- [ ] Repair All button
-- [ ] Shadow folder picker in settings
+- [ ] Shadow section in `PluginOptions` with `EnableShadow` toggle
+- [ ] Scan and Repair All buttons (disabled when `EnableShadow` is off)
+- [ ] `RepairPreviewList` populated by Scan
 
 ---
 
 ## Open Questions
 
-1. **User context for repair** — repair needs a `User` to call `GetItemList`. Should it use the admin user, or the user who owns the playlist? Need to check if playlists are per-user or server-wide in Emby 4.9.3.
+1. **Event args properties** — what properties beyond `.Playlist` do `PlaylistItemsAddedEventArgs` etc. carry? Log `e.Playlist.Name` and `e.Playlist.InternalId` on first live event. If additional item ID properties exist they'll appear — update the supplemental guide and switch from full re-export to targeted updates if possible.
 
-2. **Playlist deletion** — when a playlist is deleted in Emby, should the shadow be deleted too, or retained as a recoverable backup?
+2. **Playlist deletion** — `ItemRemoved` fires when a playlist is deleted. Should the shadow be deleted too, or retained as a recoverable backup? Leaning toward retain with a `.deleted` marker.
 
-3. **Shadow on ItemUpdated** — `ILibraryManager.ItemUpdated` fires very frequently during library scans. Need to debounce or filter to only items that appear in shadow playlists to avoid performance impact.
+3. **ItemUpdated debounce** — fires on every library scan item. Filter to only items whose provider IDs appear in any shadow file before doing any work. Consider a short debounce window (e.g. 30s) to batch rapid-fire scan events.
 
-4. **Conflict between repair and import** — if a user imports a playlist with the same name as an existing shadow, should the shadow be updated to reflect the import?
+4. **User context for repair** — `GetItemList` needs a `User`. Since playlists are now always imported as public (`IsPublic = true`), repair can use the first admin user. Confirmed: `OwnerUserId` does not exist on `Playlist` — there is no per-playlist owner to look up.

@@ -1,14 +1,28 @@
 # Emby SDK Supplemental Guide
 
+## Context for a fresh session
+
+This project has four reference documents that should all be in context together:
+
+| Document | Path | Purpose |
+|---|---|---|
+| Implementation Plan | `C:\Git\emby-playlist-manager\docs\reference\implementation_plan.md` | Confirmed API signatures, phase status, known corrections vs SDK docs |
+| Shadow Playlist System | `C:\Git\emby-playlist-manager\docs\reference\shadow_playlist_system.md` | Architecture and implementation plan for Phases 7a-7d |
+| SDK Primary Guide | `C:\Git\emby-playlist-manager\docs\reference\emby-sdk-primary-guide.md` | Confirmed namespaces, assembly map, all interface signatures |
+| This document | `C:\Git\emby-playlist-manager\docs\reference\emby-sdk-supplemental-guide.md` | Patterns, gotchas, and plugin-specific findings not in SDK docs |
+
+The project is at `C:\Git\emby-playlist-manager\emby-playlist-manager\`. Server DLLs are at `C:\Git\Emby-Server\system\`. SDK samples and OpenAPI spec are at `C:\Git\Emby.SDK-4.9.3.0\Emby.SDK-4.9.3.0\`.
+
+---
+
 Covers only what is relevant to this plugin. When something is not documented here, go to the source:
 
 ```
 C:\Git\Emby.SDK-4.9.3.0\Emby.SDK-4.9.3.0\
-  SampleCode\Examples\EmbyPluginUiDemo\     ← full UI pattern reference
-  SampleCode\Templates\EmbyPluginUiTemplate\ ← minimal UI plugin scaffold
-  SampleCode\Templates\EmbyPluginMinimalTemplate\ ← bare plugin scaffold
-  SampleCode\RestApi\Go\                    ← all REST endpoints + models
-  Resources\OpenApi\openapi_v3.json         ← full OpenAPI spec
+  SampleCode\Examples\EmbyPluginUiDemo\       ← full UI pattern reference
+  SampleCode\Templates\EmbyPluginUiTemplate\  ← minimal UI plugin scaffold
+  SampleCode\RestApi\Go\                      ← all REST endpoints + models
+  Resources\OpenApi\openapi_v3.json           ← full OpenAPI spec
 ```
 
 ---
@@ -46,7 +60,7 @@ string shadowDir = Path.Combine(appPaths.DataPath, "PlaylistManager", "shadows")
 
 ### Startup hook — `IServerEntryPoint`
 
-Not used in our current plugin (we use constructor + event subscription instead). If needed:
+Confirmed in `Emby.Server.Connect.dll` (example implementation). Interface is in `MediaBrowser.Controller.dll`. `Run()` is the correct place to subscribe to `IPlaylistManager` and `ILibraryManager` events for the shadow system.
 
 ```csharp
 public class PluginStartup : IServerEntryPoint
@@ -60,27 +74,38 @@ Register by implementing the interface — Emby discovers and runs it automatica
 
 ---
 
-## IPlaylistManager Events (Phase 7a — unvalidated)
+## IPlaylistManager Events (Phase 7a)
 
-These events are the foundation of the shadow system. Signatures are inferred from SDK patterns — **validate against server DLLs before use**.
+All events confirmed present in `Emby.Server.Implementations.dll`.
 
 ```csharp
-// Subscribe in Plugin constructor or IServerEntryPoint.Run()
+// Subscribe in IServerEntryPoint.Run()
 _playlistManager.PlaylistItemsAdded   += OnPlaylistChanged;
 _playlistManager.PlaylistItemsRemoved += OnPlaylistChanged;
 _playlistManager.PlaylistItemsMoved   += OnPlaylistChanged;
 
-// ILibraryManager — fires very frequently during scans, debounce required
+// Confirmed in Emby.Server.Implementations.dll — fires very frequently, debounce required
+_libraryManager.ItemAdded   += OnItemAdded;
+_libraryManager.ItemRemoved += OnItemRemoved;
 _libraryManager.ItemUpdated += OnItemUpdated;
 ```
 
-Event args type is likely `GenericEventArgs<Playlist>` or similar — check `MediaBrowser.Controller.Playlists` in the server DLLs. The playlist's `InternalId` and `Id` will be on the args object.
+### Event args (confirmed via XML docs)
 
-> SDK source to check: no direct sample — inspect `IPlaylistManager` interface in server DLLs at `C:\Git\Emby-Server\system\MediaBrowser.Controller.dll`
+| Event | Args Type | Confirmed Property |
+|---|---|---|
+| `PlaylistItemsAdded` | `PlaylistItemsAddedEventArgs` | `.Playlist` |
+| `PlaylistItemsRemoved` | `PlaylistItemsRemovedEventArgs` | `.Playlist` |
+| `PlaylistItemsMoved` | `PlaylistItemsMovedEventArgs` | `.Playlist` |
+| `ItemAdded/Removed/Updated` | `ItemChangeEventArgs` | `.Item` (inferred — validate at runtime) |
+
+Additional properties on the playlist event args (e.g. added/removed item IDs) are not in XML docs — inspect the args object at runtime to discover them. The `.Playlist` property gives you the affected `Playlist` item with its `InternalId` and `Id`.
 
 ---
 
-## IScheduledTask (Phase 7c)
+## IScheduledTask
+
+Confirmed in `MediaBrowser.Model.dll`. Related types also confirmed: `IConfigurableScheduledTask`, `IEarlyRunScheduledTask`. Concrete trigger classes (`IntervalTrigger`, `StartupTrigger`, `DailyTrigger`, `WeeklyTrigger`) confirmed in `Emby.Server.Implementations.dll`.
 
 ```csharp
 public class PlaylistRepairTask : IScheduledTask
@@ -94,8 +119,8 @@ public class PlaylistRepairTask : IScheduledTask
     {
         new TaskTriggerInfo
         {
-            Type        = TaskTriggerInfo.TriggerWeekly,
-            DayOfWeek   = DayOfWeek.Sunday,
+            Type           = TaskTriggerInfo.TriggerWeekly,
+            DayOfWeek      = DayOfWeek.Sunday,
             TimeOfDayTicks = TimeSpan.FromHours(3).Ticks
         }
     };
@@ -107,7 +132,7 @@ public class PlaylistRepairTask : IScheduledTask
 }
 ```
 
-### TaskTriggerInfo.Type constants (from SDK model)
+### TaskTriggerInfo.Type constants (confirmed in MediaBrowser.Model.dll)
 
 | Constant | Meaning |
 |---|---|
@@ -144,6 +169,16 @@ Note: REST `{Id}` is the Guid string (same as `item.Id.ToString("N")` or the str
 | `DELETE` | `/ScheduledTasks/Running/{Id}` | Stop task |
 | `POST` | `/ScheduledTasks/{Id}/Triggers` | Update triggers |
 
+## Playlist Ownership
+
+`IHasShares` confirmed in `MediaBrowser.Controller.dll` with members: `get_Shares`, `set_Shares`, `DeleteUserItemShares`, `SaveUserItemShares`, `GetUserItemShares`. `OwnerUserId` and `LinkedUserIds` are **not present in any DLL** — Emby does not store a per-playlist owner ID.
+
+Ownership is controlled entirely by `IsPublic` on `PlaylistCreationRequest`:
+- `IsPublic = true` → shared `Playlists` folder, visible to all users
+- `IsPublic = false` / omitted → `UserPlaylists` folder, private to the `User` on the request
+
+We always set `IsPublic = true` on import. Overwrite reuses the existing `InternalId` and inherits the playlist's existing type.
+
 ---
 
 ## GenericEdit UI Attributes (quick reference)
@@ -174,6 +209,17 @@ public ButtonItem  GoButton  { get; set; } = new ButtonItem("Button Label");
 
 `ButtonItem` triggers `OnSaveCommand(itemId, commandId, data)` in the page view — `commandId` matches the property name.
 
+### GenericListItem
+
+`GenericListItem.Icon` is `IconNames?` (nullable enum), **not** `string`. Local variables holding icon values must be typed `IconNames?`:
+
+```csharp
+IconNames? icon = IconNames.playlist_add;  // correct
+string icon = IconNames.playlist_add;       // CS0029 build error
+```
+
+Common values: `IconNames.playlist_add`, `IconNames.warning`, `IconNames.error`, `IconNames.download`, `IconNames.upload`.
+
 ---
 
 ## SimpleFileStore Pattern
@@ -203,7 +249,8 @@ File is saved as `{pluginName}.json` in `PluginConfigurationsPath`. Options that
 | Issue | Detail |
 |---|---|
 | `AddToPlaylist` is void | Do not await — it returns void, not Task |
-| `IsPublic` on `PlaylistCreationRequest` | `true` = lands in shared `Playlists` folder, visible to all users; `false`/omitted = lands in `UserPlaylists`, private to the `User` on the request. Not in XML docs but confirmed present in DLL. Always set `true` on import. |
+| `IsPublic` on `PlaylistCreationRequest` | `true` = shared `Playlists` folder; `false`/omitted = `UserPlaylists` private to `User`. Not in XML docs but confirmed in DLL. Always set `true` on import. |
+| `OwnerUserId` / `LinkedUserIds` don't exist | Emby has no per-playlist owner ID — ownership is `IsPublic` + which folder the playlist lives in |
 | `PlaylistCreationResult.Id` is a string | Parse as Guid: `new Guid(result.Id)`, then `GetItemById(guid)` to get `InternalId` |
 | `InternalId` vs `Id` | Playlist operations (`AddToPlaylist`, `RemoveFromPlaylist`) take `long` (InternalId); `GetItemById` takes `Guid` (Id) |
 | `ParentIds` is plural | `InternalItemsQuery.ParentIds` is `long[]`, not `ParentId` singular |

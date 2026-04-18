@@ -27,11 +27,11 @@ Emby's internal item IDs and file paths change when you migrate to a new server 
 ## Project Structure
 
 ```
-emby-playlist-export-import/
-├── emby-playlist-export-import.csproj
+EmbyPlaylistManager/
+├── EmbyPlaylistManager.csproj
 ├── Plugin.cs                    # Plugin entry point (BasePlugin + IHasUIPages)
-├── PluginOptions.cs             # UI options page
-├── PlaylistService.cs           # Core export/import logic
+├── PluginOptions.cs             # UI options page (export, import, collision mode, shadow toggle)
+├── PlaylistService.cs           # Core export/import/repair logic
 ├── Models/
 │   ├── PlaylistExportDto.cs     # Top-level export wrapper (one per playlist)
 │   └── PlaylistItemDto.cs       # Portable media item (provider IDs)
@@ -163,7 +163,27 @@ Each export file is an array of playlist objects. A single export covers all pla
 - Export captures provider IDs that Emby has scraped — items without IMDb or TMDb IDs will not resolve on import and will be logged as missing
 - Episode `SeriesTmdbId` is only populated if the series was scraped with TMDb; if only IMDb is present the episode still resolves via its own `ImdbId`
 - Collision detection is name-based — renaming a playlist before import will allow it through
+- File picker pre-populates with the full saved path including filename — clear the filename portion before browsing to a new file
 
-## SDK Reference
+## Developer Reference
 
-Built against Emby Server 4.9.3.0 (.NET 8) using patterns from the [Emby SDK 4.9.3.0](https://emby.media/community/index.php?/forum/147-developer-api/) sample templates.
+Three documents in `docs/reference/` should be read together when working on this project:
+
+| Document | Purpose |
+|---|---|
+| `docs/reference/implementation_plan.md` | Confirmed API signatures, phase completion status, corrections vs SDK assumptions |
+| `docs/reference/shadow_playlist_system.md` | Architecture and implementation plan for the shadow/repair system (Phases 7a-7d) |
+| `docs/reference/emby-sdk-primary-guide.md` | Confirmed namespaces, assembly map, and interface signatures for all Emby SDK types used |
+| `docs/reference/emby-sdk-supplemental-guide.md` | Patterns, gotchas, and findings specific to this plugin that aren't in the SDK docs |
+
+### Key paths
+
+| Resource | Path |
+|---|---|
+| This project | `C:\Git\emby-playlist-manager\emby-playlist-manager\` |
+| Emby Server DLLs (4.9.3.0, .NET 8) | `C:\Git\Emby-Server\system\` |
+| Emby SDK samples + OpenAPI spec | `C:\Git\Emby.SDK-4.9.3.0\Emby.SDK-4.9.3.0\` |
+
+### Why direct DLL references instead of NuGet
+
+Emby Server 4.9.3 runs on .NET 8. The NuGet packages (`MediaBrowser.Server.Core`) target `netstandard2.0` and ship assembly version `4.9.1.90` — incompatible at compile time. All references point directly to the server `system` folder. The plugin must be compiled against the same version the server is running or it will fail to load (`LoaderException`).

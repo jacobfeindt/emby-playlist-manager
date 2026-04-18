@@ -40,6 +40,8 @@ namespace EmbyPlaylistManager
         [AutoPostBack("Preview", nameof(ImportFilePath))]
         public string ImportFilePath { get; set; }
 
+        public LabelItem SelectedFileLabel { get; set; } = new LabelItem("No file selected.");
+
         public CaptionItem PreviewCaption { get; set; } = new CaptionItem("Playlists in File");
 
         [DisplayName("")]
