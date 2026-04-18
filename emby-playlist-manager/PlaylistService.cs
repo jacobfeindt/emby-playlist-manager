@@ -84,6 +84,34 @@ namespace EmbyPlaylistManager
                             dto.SeriesTvdbId = sTvdbId;
                     }
 
+                    // Fallback: walk up to the Series item directly
+                    if (dto.SeriesTmdbId == null && dto.SeriesTvdbId == null)
+                    {
+                        var seriesIdProp = item.GetType().GetProperty("SeriesId");
+                        if (seriesIdProp?.GetValue(item) is long seriesInternalId && seriesInternalId > 0)
+                        {
+                            var seriesItem = _libraryManager.GetItemList(new InternalItemsQuery(user)
+                            {
+                                IncludeItemTypes = new[] { "Series" },
+                                Limit = 1
+                            }).FirstOrDefault(s => s.InternalId == seriesInternalId)
+                            ?? _libraryManager.GetItemList(new InternalItemsQuery(user)
+                            {
+                                AncestorIds = new[] { seriesInternalId },
+                                IncludeItemTypes = new[] { "Series" },
+                                Limit = 1
+                            }).FirstOrDefault();
+
+                            if (seriesItem?.ProviderIds != null)
+                            {
+                                if (seriesItem.ProviderIds.TryGetValue("Tmdb", out var st) && int.TryParse(st, out var stId))
+                                    dto.SeriesTmdbId = stId;
+                                if (seriesItem.ProviderIds.TryGetValue("Tvdb", out var sv) && int.TryParse(sv, out var svId))
+                                    dto.SeriesTvdbId = svId;
+                            }
+                        }
+                    }
+
                     var seasonProp = item.GetType().GetProperty("ParentIndexNumber");
                     var indexProp = item.GetType().GetProperty("IndexNumber");
                     if (seasonProp != null) dto.Season = (int?)seasonProp.GetValue(item);
@@ -203,7 +231,8 @@ namespace EmbyPlaylistManager
 
                     // Try each provider ID in priority order: Imdb first, Tmdb second, then anything else
                     var prioritized = dto.ProviderIds
-                        .OrderBy(k => k.Key == "Imdb" ? 0 : k.Key == "Tmdb" ? 1 : 2);
+                        .OrderBy(k => k.Key.Equals("Imdb", StringComparison.OrdinalIgnoreCase) ? 0 :
+                                      k.Key.Equals("Tmdb", StringComparison.OrdinalIgnoreCase) ? 1 : 2);
 
                     foreach (var providerId in prioritized)
                     {
