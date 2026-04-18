@@ -17,18 +17,40 @@ The primary guide contains confirmed namespaces, assembly map, and all interface
 
 ## Overview
 
-The shadow playlist system maintains a continuously updated JSON copy of every Emby playlist. This enables playlist repair without requiring a manual export — the shadow is always current because it updates in response to live Emby events rather than on a timer.
+The shadow playlist system maintains a continuously updated JSON copy of every Emby playlist. It runs silently in the background and is the foundation for automatic playlist repair.
 
-This is the foundation for:
-- **Automatic repair** — detect and fix broken playlist links after library reorganization (Sonarr renames, folder moves, etc.)
-- **Scheduled repair** — run as an Emby scheduled task on a configurable interval
-- **Cross-server migration** — shadow files are in the same `PlaylistExportDto` format as manual exports, so they work with the existing import feature
+### How it works
 
----
+1. When the plugin loads, it subscribes to Emby's playlist change events (`PlaylistItemsAdded`, `PlaylistItemsRemoved`, `PlaylistItemsMoved`)
+2. Every time a playlist is modified, the shadow file for that playlist is rewritten with the current contents — capturing all provider IDs (IMDb, TMDb, TVDb, etc.) for every item
+3. On first enable, all existing playlists are exported to shadow files to build the initial state
+4. Shadow files live at `{DataPath}\PlaylistManager\shadows\{PlaylistName}-{PlaylistId}.json` and use the same `PlaylistExportDto` format as manual exports
 
-## Why Not Scheduled Export?
+### How repair works
 
-A scheduled export (daily/weekly) would cycle out of history after a Sonarr rename if the rename happens between exports. The shadow approach avoids this because it updates **on every playlist change event**, not on a timer. The shadow is always a current, accurate representation of each playlist's intended contents.
+When Sonarr renames a file, Emby re-scans and creates a new library item for it — but the old item that was in your playlist is now a dead link. The shadow file still has the provider IDs for every item that *should* be in the playlist.
+
+Repair:
+1. Compares each shadow file against the live playlist by provider ID
+2. Items in the shadow but missing from the live playlist are "broken"
+3. Re-resolves each broken item against the current library using its provider IDs
+4. Adds the newly resolved item back to the playlist
+5. Reports what was fixed and what is still missing (media not in library)
+
+Repair can be triggered manually via the UI or run automatically on a schedule via Emby's scheduled task system.
+
+### Enabling the shadow system
+
+The shadow system is **off by default**. Enable it in the plugin UI under the **Shadow Playlists** section:
+
+```
+[Shadow Playlists]
+  Enable Shadow Playlists  — toggle this on to activate background tracking and repair
+```
+
+When off: no events are subscribed, no files are written, scan/repair buttons are disabled, and the scheduled task exits immediately without doing anything.
+
+When turned on for the first time: all existing playlists are exported to shadow files automatically.
 
 ---
 
@@ -48,8 +70,8 @@ Each file is a single `PlaylistExportDto` object (not a list — one file per pl
   "PlaylistName": "Christmas Shows",
   "PlaylistId": "1ec3d3ec-997d-bf88-f7ad-49ecaa506c43",
   "Items": [
-    { "Name": "Home Alone", "ImdbId": "tt0099785", "TmdbId": 771 },
-    { "Name": "Elf", "ImdbId": "tt0319343", "TmdbId": 10719 }
+    { "Name": "Home Alone", "ProviderIds": { "Imdb": "tt0099785", "Tmdb": "771" } },
+    { "Name": "Elf", "ProviderIds": { "Imdb": "tt0319343", "Tmdb": "10719" } }
   ]
 }
 ```
@@ -110,15 +132,14 @@ An item is broken when it appears in the shadow but is missing from the live Emb
 ```
 For each shadow file:
   1. Find the matching live playlist by name
-  2. If playlist doesn't exist → skip (or optionally recreate via import)
+  2. If playlist doesn't exist → skip
   3. Get current live items via GetItemList(ListIds = [playlist.InternalId])
-  4. Get shadow items
-  5. Diff: shadow items not in live items = broken items
-  6. For each broken item:
-     a. Re-resolve by ImdbId → TmdbId → SeriesTmdbId+Season+Episode
+  4. Diff: shadow items not present in live items (by provider ID) = broken items
+  5. For each broken item:
+     a. Iterate ProviderIds (Imdb first, Tmdb second, then anything else)
      b. If found in library: AddToPlaylist
      c. If not found: log as still missing
-  7. Report: fixed count, still missing count
+  6. Report: fixed count, still missing count
 ```
 
 ### Identifying broken items
@@ -126,12 +147,11 @@ For each shadow file:
 Compare shadow items to live items by provider ID, not by name or internal ID:
 
 ```csharp
-// Item is present in live playlist if any live item shares a provider ID
 bool IsPresent(PlaylistItemDto shadowItem, IEnumerable<BaseItem> liveItems)
 {
     return liveItems.Any(live =>
-        (!string.IsNullOrEmpty(shadowItem.ImdbId) && live.ProviderIds.TryGetValue("Imdb", out var id) && id == shadowItem.ImdbId) ||
-        (shadowItem.TmdbId.HasValue && live.ProviderIds.TryGetValue("Tmdb", out var tid) && tid == shadowItem.TmdbId.Value.ToString()));
+        shadowItem.ProviderIds.Any(kvp =>
+            live.ProviderIds.TryGetValue(kvp.Key, out var val) && val == kvp.Value));
 }
 ```
 

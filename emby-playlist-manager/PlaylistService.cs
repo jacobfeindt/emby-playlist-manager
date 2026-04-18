@@ -76,8 +76,13 @@ namespace EmbyPlaylistManager
                 {
                     var seriesProp = item.GetType().GetProperty("SeriesProviderIds");
                     var seriesIds = seriesProp?.GetValue(item) as IDictionary<string, string>;
-                    if (seriesIds != null && seriesIds.TryGetValue("Tmdb", out var sTmdb) && int.TryParse(sTmdb, out var sTmdbId))
-                        dto.SeriesTmdbId = sTmdbId;
+                    if (seriesIds != null)
+                    {
+                        if (seriesIds.TryGetValue("Tmdb", out var sTmdb) && int.TryParse(sTmdb, out var sTmdbId))
+                            dto.SeriesTmdbId = sTmdbId;
+                        if (seriesIds.TryGetValue("Tvdb", out var sTvdb) && int.TryParse(sTvdb, out var sTvdbId))
+                            dto.SeriesTvdbId = sTvdbId;
+                    }
 
                     var seasonProp = item.GetType().GetProperty("ParentIndexNumber");
                     var indexProp = item.GetType().GetProperty("IndexNumber");
@@ -87,11 +92,15 @@ namespace EmbyPlaylistManager
 
                 if (item.ProviderIds != null)
                 {
-                    if (item.ProviderIds.TryGetValue("Imdb", out var imdb))
-                        dto.ImdbId = imdb;
-                    if (item.ProviderIds.TryGetValue("Tmdb", out var tmdb) && int.TryParse(tmdb, out var tmdbId))
-                        dto.TmdbId = tmdbId;
+                    foreach (var kvp in item.ProviderIds)
+                        dto.ProviderIds[kvp.Key] = kvp.Value;
                 }
+
+                _logger.Info("  Item '{0}' [{1}]: ProviderIds={2}, SeriesTmdbId={3}, SeriesTvdbId={4}, S{5}E{6}",
+                    dto.Name, item.GetType().Name,
+                    dto.ProviderIds.Count > 0 ? string.Join(", ", dto.ProviderIds.Select(k => $"{k.Key}={k.Value}")) : "none",
+                    dto.SeriesTmdbId?.ToString() ?? "none", dto.SeriesTvdbId?.ToString() ?? "none",
+                    dto.Season, dto.Episode);
 
                 export.Items.Add(dto);
             }
@@ -192,26 +201,31 @@ namespace EmbyPlaylistManager
                 {
                     BaseItem item = null;
 
-                    if (!string.IsNullOrEmpty(dto.ImdbId))
+                    // Try each provider ID in priority order: Imdb first, Tmdb second, then anything else
+                    var prioritized = dto.ProviderIds
+                        .OrderBy(k => k.Key == "Imdb" ? 0 : k.Key == "Tmdb" ? 1 : 2);
+
+                    foreach (var providerId in prioritized)
                     {
                         item = _libraryManager.GetItemList(new InternalItemsQuery(user)
                         {
-                            AnyProviderIdEquals = new[] { new KeyValuePair<string, string>("Imdb", dto.ImdbId) }
+                            AnyProviderIdEquals = new[] { new KeyValuePair<string, string>(providerId.Key, providerId.Value) }
                         }).FirstOrDefault();
+
+                        if (item != null) break;
                     }
-                    else if (dto.TmdbId.HasValue)
+
+                    // Fallback: episode lookup via series provider ID + season/episode number
+                    if (item == null && (dto.SeriesTmdbId.HasValue || dto.SeriesTvdbId.HasValue) && dto.Season.HasValue && dto.Episode.HasValue)
                     {
-                        item = _libraryManager.GetItemList(new InternalItemsQuery(user)
-                        {
-                            AnyProviderIdEquals = new[] { new KeyValuePair<string, string>("Tmdb", dto.TmdbId.Value.ToString()) }
-                        }).FirstOrDefault();
-                    }
-                    else if (dto.SeriesTmdbId.HasValue && dto.Season.HasValue && dto.Episode.HasValue)
-                    {
+                        var seriesProviderPair = dto.SeriesTmdbId.HasValue
+                            ? new KeyValuePair<string, string>("Tmdb", dto.SeriesTmdbId.Value.ToString())
+                            : new KeyValuePair<string, string>("Tvdb", dto.SeriesTvdbId.Value.ToString());
+
                         var series = _libraryManager.GetItemList(new InternalItemsQuery(user)
                         {
                             IncludeItemTypes = new[] { "Series" },
-                            AnyProviderIdEquals = new[] { new KeyValuePair<string, string>("Tmdb", dto.SeriesTmdbId.Value.ToString()) }
+                            AnyProviderIdEquals = new[] { seriesProviderPair }
                         }).FirstOrDefault();
 
                         if (series != null)
@@ -234,8 +248,10 @@ namespace EmbyPlaylistManager
                     }
                     else
                     {
-                        _logger.Warn("Could not resolve item: Name='{0}', ImdbId='{1}', TmdbId='{2}', SeriesTmdbId='{3}', S{4}E{5}",
-                            dto.Name, dto.ImdbId, dto.TmdbId, dto.SeriesTmdbId, dto.Season, dto.Episode);
+                        _logger.Warn("Could not resolve item: Name='{0}', ProviderIds={1}, SeriesTmdbId='{2}', SeriesTvdbId='{3}', S{4}E{5}",
+                            dto.Name,
+                            dto.ProviderIds.Count > 0 ? string.Join(", ", dto.ProviderIds.Select(k => $"{k.Key}={k.Value}")) : "none",
+                            dto.SeriesTmdbId, dto.SeriesTvdbId, dto.Season, dto.Episode);
                         missing++;
                     }
                 }

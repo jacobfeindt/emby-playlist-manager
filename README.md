@@ -5,8 +5,10 @@ An Emby Server plugin for managing playlists — export, import, and repair usin
 ## Features
 
 - Export all playlists to a single portable JSON file
-- Import playlists from JSON, resolving items against the local library by IMDb/TMDb ID
-- Handles movies, TV series, and individual episodes
+- Import playlists from JSON, resolving items by any provider ID Emby has scraped (IMDb, TMDb, TVDb, etc.)
+- All provider IDs captured at export — new providers added by Emby in future versions come for free
+- Import resolution priority: IMDb → TMDb → any other provider ID, stopping on first match
+- Episode fallback: resolves via series TMDb/TVDb ID + season/episode number if no direct item match
 - Collision detection — playlists that already exist on the target server are skipped
 - Preview imported playlists before committing — shows item counts and collision status
 - Export filename includes the source server name and timestamp
@@ -119,7 +121,7 @@ Response:
 
 ## Exported JSON Format
 
-Each export file is an array of playlist objects. A single export covers all playlists on the server.
+Each export file is an array of playlist objects. `ProviderIds` captures all IDs Emby has scraped for the item.
 
 ```json
 [
@@ -129,9 +131,9 @@ Each export file is an array of playlist objects. A single export covers all pla
     "Items": [
       {
         "Name": "Inception",
-        "ImdbId": "tt1375666",
-        "TmdbId": 27205,
+        "ProviderIds": { "Imdb": "tt1375666", "Tmdb": "27205" },
         "SeriesTmdbId": null,
+        "SeriesTvdbId": null,
         "Season": null,
         "Episode": null
       }
@@ -143,9 +145,9 @@ Each export file is an array of playlist objects. A single export covers all pla
     "Items": [
       {
         "Name": "Pilot",
-        "ImdbId": "tt0620288",
-        "TmdbId": null,
+        "ProviderIds": { "Imdb": "tt0620288", "Tvdb": "349232" },
         "SeriesTmdbId": 1396,
+        "SeriesTvdbId": 81189,
         "Season": 1,
         "Episode": 1
       }
@@ -154,9 +156,9 @@ Each export file is an array of playlist objects. A single export covers all pla
 ]
 ```
 
-- `PlaylistId` is for reference only — it is never used during import
-- Movies/series resolve via `ImdbId` first, then `TmdbId`
-- Episodes resolve via `ImdbId` if present, otherwise via `SeriesTmdbId` + `Season` + `Episode`
+- `PlaylistId` is for reference only — never used during import
+- Import iterates `ProviderIds` with Imdb first, Tmdb second, then anything else, stopping on first match
+- Episode series fallback uses `SeriesTmdbId` or `SeriesTvdbId` + `Season` + `Episode` if no direct item match
 
 ## Known Limitations
 
@@ -164,6 +166,7 @@ Each export file is an array of playlist objects. A single export covers all pla
 - Episode `SeriesTmdbId` is only populated if the series was scraped with TMDb; if only IMDb is present the episode still resolves via its own `ImdbId`
 - Collision detection is name-based — renaming a playlist before import will allow it through
 - File picker pre-populates with the full saved path including filename — clear the filename portion before browsing to a new file
+- Items with no provider IDs in Emby (unscraped media) will not resolve on import and are logged as missing
 
 ## Developer Reference
 

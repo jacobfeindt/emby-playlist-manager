@@ -225,13 +225,19 @@ Portable representation of a single media item:
 public class PlaylistItemDto
 {
     public string Name { get; set; }
-    public string ImdbId { get; set; }
-    public int? TmdbId { get; set; }
+    public Dictionary<string, string> ProviderIds { get; set; } = new Dictionary<string, string>();
+
+    // Episode-specific fields
     public int? SeriesTmdbId { get; set; }
+    public int? SeriesTvdbId { get; set; }
     public int? Season { get; set; }
     public int? Episode { get; set; }
 }
 ```
+
+- `ProviderIds` captures all provider IDs Emby has for the item (Imdb, Tmdb, Tvdb, etc.) in one dictionary — future providers come for free
+- Import resolves by iterating `ProviderIds` with Imdb first, Tmdb second, then anything else, stopping on first match
+- Series fallback: if no direct match found and `SeriesTmdbId`/`SeriesTvdbId` + `Season` + `Episode` are present, resolves via series lookup
 
 ### PlaylistExportDto
 Top-level wrapper — a single export file is always `List<PlaylistExportDto>` regardless of whether one or all playlists were exported:
@@ -263,22 +269,24 @@ Constructor receives `ILibraryManager`, `IPlaylistManager`, `ILogger`.
 ```
 1. GetItemList(InternalItemsQuery { IncludeItemTypes = ["Playlist"] }) — get all playlists
 2. For each playlist:
-   a. GetItemList({ ParentIds = [playlist.InternalId] }) — get items
-   b. Map each item's ProviderIds → PlaylistItemDto
-   c. For episodes: reflect SeriesProviderIds["Tmdb"], ParentIndexNumber, IndexNumber
+   a. GetItemList({ ListIds = [playlist.InternalId] }) — get items
+   b. Copy all item.ProviderIds into dto.ProviderIds dictionary
+   c. For episodes: reflect SeriesProviderIds["Tmdb"] and ["Tvdb"], ParentIndexNumber, IndexNumber
 3. Return List<PlaylistExportDto>
 ```
 
 #### Import
 
 ```
-1. Caller performs collision detection — only non-colliding playlists passed in
+1. Caller handles collision mode (overwrite or auto-rename)
 2. For each PlaylistExportDto:
-   a. CreatePlaylist({ Name = playlist.PlaylistName, User })
+   a. CreatePlaylist({ Name, User, IsPublic = true })
    b. For each PlaylistItemDto (per-item try/catch):
-      - Resolve: HasAnyProviderId["Imdb:..."] → ["Tmdb:..."] → series+episode query
+      - Iterate ProviderIds ordered Imdb → Tmdb → everything else
+      - Stop on first match via AnyProviderIdEquals
+      - If no match and SeriesTmdbId/SeriesTvdbId + Season + Episode present: series fallback lookup
       - If found: AddToPlaylist(internalId, [item.InternalId], user)  ← void, no await
-      - If not found: log warning
+      - If not found: log warning with all provider IDs
    c. Log per-playlist summary
 3. Log overall summary
 ```
