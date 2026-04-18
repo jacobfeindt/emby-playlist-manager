@@ -36,6 +36,29 @@ An Emby Server plugin for managing playlists — export, import, and automatic r
 
 Emby's internal item IDs and file paths change when you migrate to a new server or re-scan a library. By storing IMDb/TMDb/TVDb IDs in the exported JSON, playlists can be reliably reconstructed on any Emby instance that has the same media — regardless of where files are stored.
 
+## Cross-Platform Migration (e.g. Windows → Linux)
+
+The shadow playlist system makes server migration seamless — no manual export/import needed:
+
+```
+Old server
+  1. Install plugin, enable Shadow Playlists, save
+  2. Let it run — shadows build automatically from live playlists
+  3. Run MBBackup
+
+New server
+  1. Restore from MBBackup
+     - Plugin settings (EnableShadow=true) are restored automatically
+     - Shadow backup copies (.shadow.json) are restored into userplaylists
+  2. Install plugin — it picks up the restored settings
+  3. Restart — shadow files are auto-promoted from backup copies on startup
+  4. Click Repair All in the plugin UI
+     - Re-resolves every playlist item against the new library by provider ID
+     - Handles path changes, Linux vs Windows paths, re-scanned libraries
+```
+
+This works because shadow files store provider IDs (IMDb, TMDb, TVDb), not file paths or internal IDs — so they survive any library reorganization or platform change.
+
 ## Requirements
 
 - Emby Server 4.9.3+
