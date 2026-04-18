@@ -8,6 +8,12 @@ using MediaBrowser.Model.Attributes;
 
 namespace EmbyPlaylistManager
 {
+    public enum CollisionMode
+    {
+        AutoRename,
+        Overwrite
+    }
+
     public class PluginOptions : EditableOptionsBase
     {
         public override string EditorTitle => "Playlist Manager";
@@ -37,8 +43,12 @@ namespace EmbyPlaylistManager
         public CaptionItem PreviewCaption { get; set; } = new CaptionItem("Playlists in File");
 
         [DisplayName("")]
-        [Description("Playlists found in the selected file. Existing playlists with the same name will be skipped on import.")]
+        [Description("Playlists found in the selected file.")]
         public GenericItemList PreviewList { get; set; } = new GenericItemList();
+
+        [DisplayName("Overwrite Existing Playlists")]
+        [Description("When on, existing playlists are cleared and rebuilt from the import file. When off, a unique name is generated (e.g. My Playlist (1)).")]
+        public bool OverwriteExisting { get; set; } = false;
 
         public ButtonItem ImportButton { get; set; } = new ButtonItem("Import Playlists") { Icon = IconNames.download, Data1 = "Import" };
 

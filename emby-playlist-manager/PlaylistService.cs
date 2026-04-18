@@ -100,45 +100,88 @@ namespace EmbyPlaylistManager
             return export;
         }
 
-        public async Task ImportPlaylists(User user, List<PlaylistExportDto> playlists)
+        public async Task ImportPlaylists(User user, List<PlaylistExportDto> playlists, bool overwrite = false)
         {
-            _logger.Info("Starting import of {0} playlists for user {1}.", playlists.Count, user.Name);
+            _logger.Info("Starting import of {0} playlists for user {1} (overwrite: {2}).", playlists.Count, user.Name, overwrite);
 
             foreach (var playlist in playlists)
             {
-                await ImportPlaylist(user, playlist);
+                await ImportPlaylist(user, playlist, overwrite);
             }
 
             _logger.Info("Import complete for user {0}.", user.Name);
         }
 
-        private async Task ImportPlaylist(User user, PlaylistExportDto playlist)
+        private string GetUniqueName(string baseName, User user)
+        {
+            var existing = new HashSet<string>(
+                _libraryManager.GetItemList(new InternalItemsQuery(user)
+                {
+                    IncludeItemTypes = new[] { "Playlist" }
+                }).Select(p => p.Name),
+                StringComparer.OrdinalIgnoreCase);
+
+            var candidate = baseName;
+            var i = 1;
+            while (existing.Contains(candidate))
+                candidate = $"{baseName} ({i++})";
+            return candidate;
+        }
+
+        private async Task ImportPlaylist(User user, PlaylistExportDto playlist, bool overwrite)
         {
             _logger.Info("Importing playlist '{0}' ({1} items).", playlist.PlaylistName, playlist.Items.Count);
 
-            var createResult = await _playlistManager.CreatePlaylist(new PlaylistCreationRequest
-            {
-                Name = playlist.PlaylistName,
-                User = user
-            });
+            long playlistInternalId;
 
-            if (!long.TryParse(createResult.Id, out var playlistInternalId))
+            var existing = _libraryManager.GetItemList(new InternalItemsQuery(user)
             {
-                _logger.Warn("Could not parse playlist ID '{0}' for '{1}'. Trying Guid parse.", createResult.Id, playlist.PlaylistName);
-                if (Guid.TryParse(createResult.Id, out var playlistGuid))
+                IncludeItemTypes = new[] { "Playlist" }
+            }).FirstOrDefault(p => string.Equals(p.Name, playlist.PlaylistName, StringComparison.OrdinalIgnoreCase));
+
+            if (existing != null && overwrite)
+            {
+                _logger.Info("Overwriting existing playlist '{0}'.", playlist.PlaylistName);
+                var existingItems = _libraryManager.GetItemList(new InternalItemsQuery(user)
                 {
-                    var playlistItem = _libraryManager.GetItemById(playlistGuid);
-                    if (playlistItem == null)
+                    ListIds = new[] { existing.InternalId }
+                });
+                if (existingItems.Length > 0)
+                {
+                    var entryIds = existingItems.Select(i => i.InternalId).ToArray();
+                    await _playlistManager.RemoveFromPlaylist(existing.InternalId, entryIds);
+                }
+                playlistInternalId = existing.InternalId;
+            }
+            else
+            {
+                var name = existing != null ? GetUniqueName(playlist.PlaylistName, user) : playlist.PlaylistName;
+
+                var createResult = await _playlistManager.CreatePlaylist(new PlaylistCreationRequest
+                {
+                    Name = name,
+                    User = user,
+                    IsPublic = true
+                });
+
+                if (!long.TryParse(createResult.Id, out playlistInternalId))
+                {
+                    _logger.Warn("Could not parse playlist ID '{0}' for '{1}'. Trying Guid parse.", createResult.Id, playlist.PlaylistName);
+                    if (Guid.TryParse(createResult.Id, out var playlistGuid))
                     {
-                        _logger.Warn("Could not find playlist '{0}' by Guid {1}.", playlist.PlaylistName, playlistGuid);
+                        var playlistItem = _libraryManager.GetItemById(playlistGuid);
+                        if (playlistItem == null)
+                        {
+                            _logger.Warn("Could not find playlist '{0}' by Guid {1}.", playlist.PlaylistName, playlistGuid);
+                            return;
+                        }
+                        playlistInternalId = playlistItem.InternalId;
+                    }
+                    else
+                    {
+                        _logger.Warn("Unrecognized playlist ID format '{0}' for '{1}'.", createResult.Id, playlist.PlaylistName);
                         return;
                     }
-                    playlistInternalId = playlistItem.InternalId;
-                }
-                else
-                {
-                    _logger.Warn("Unrecognized playlist ID format '{0}' for '{1}'.", createResult.Id, playlist.PlaylistName);
-                    return;
                 }
             }
             int added = 0, missing = 0;

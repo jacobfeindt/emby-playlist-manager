@@ -374,27 +374,14 @@ When library paths change (e.g. Sonarr renames a TV show folder, or media is mov
 
 ---
 
-### Phase 6 — Import Collision Options
-
-Currently import always skips playlists whose name already exists. Add a configurable collision handling mode.
-
-#### Modes
-
-| Mode | Behavior |
-|---|---|
-| `Skip` | Current behavior — existing playlists are not touched (default) |
-| `Overwrite` | Clear the existing playlist and rebuild it from the import file |
-| `AutoRename` | Create a new playlist with a suffixed name: `Playlist (1)`, `Playlist (2)`, etc. |
-
-#### UI additions
-- `CollisionMode` enum dropdown on the options page (applies globally to all imports)
-- Preview list updates to reflect the selected mode — e.g. Overwrite shows as Warning instead of skipped
-
-#### Service changes
-- `ImportPlaylists` accepts a `CollisionMode` parameter
-- `Overwrite`: find existing playlist by name → `RemoveFromPlaylist` all items → re-add resolved items
-- `AutoRename`: generate unique name before calling `CreatePlaylist`
-- HTTP API: `POST /PlaylistMigration/Import` accepts optional `collisionMode` query param
+### Phase 6 — Import Collision Options ✅ Complete
+- [x] `CollisionMode` enum: `Skip` (default) | `Overwrite`
+- [x] Dropdown in `PluginOptions` — persisted with other settings
+- [x] Preview list reflects selected mode — Overwrite shows "will be overwritten" in yellow
+- [x] `ImportPlaylists` accepts `CollisionMode` parameter
+- [x] Overwrite: find existing playlist → `RemoveFromPlaylist` all items → re-add resolved items
+- [ ] `AutoRename` mode — not implemented
+- [ ] HTTP API `collisionMode` query param — not implemented
 
 ---
 

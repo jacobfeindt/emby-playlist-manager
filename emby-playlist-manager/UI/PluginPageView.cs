@@ -103,18 +103,40 @@ namespace EmbyPlaylistManager.UI
                 }
 
                 var existingNames = GetExistingPlaylistNames();
+                var overwrite = this.Options.OverwriteExisting;
 
                 foreach (var playlist in playlists)
                 {
                     var exists = existingNames.Contains(playlist.PlaylistName, StringComparer.OrdinalIgnoreCase);
+                    string secondaryText;
+                    ItemStatus status;
+                    string icon;
+
+                    if (!exists)
+                    {
+                        secondaryText = $"{playlist.Items.Count} items — will be imported";
+                        status = ItemStatus.Succeeded;
+                        icon = IconNames.playlist_add;
+                    }
+                    else if (overwrite)
+                    {
+                        secondaryText = $"{playlist.Items.Count} items — will be overwritten";
+                        status = ItemStatus.Warning;
+                        icon = IconNames.warning;
+                    }
+                    else
+                    {
+                        secondaryText = $"{playlist.Items.Count} items — will be imported as '{GetPreviewUniqueName(playlist.PlaylistName, existingNames)}'";
+                        status = ItemStatus.Succeeded;
+                        icon = IconNames.playlist_add;
+                    }
+
                     this.Options.PreviewList.Add(new GenericListItem
                     {
                         PrimaryText = playlist.PlaylistName,
-                        SecondaryText = exists
-                            ? $"{playlist.Items.Count} items — will be skipped (playlist already exists)"
-                            : $"{playlist.Items.Count} items — will be imported",
-                        Status = exists ? ItemStatus.Warning : ItemStatus.Succeeded,
-                        Icon = exists ? IconNames.warning : IconNames.playlist_add,
+                        SecondaryText = secondaryText,
+                        Status = status,
+                        Icon = icon,
                         IconMode = ItemListIconMode.SmallRegular
                     });
                 }
@@ -196,21 +218,12 @@ namespace EmbyPlaylistManager.UI
                 }
 
                 var existingNames = GetExistingPlaylistNames();
-                var toImport = playlists.Where(p => !existingNames.Contains(p.PlaylistName, StringComparer.OrdinalIgnoreCase)).ToList();
-                var skipped = playlists.Count - toImport.Count;
-
-                if (toImport.Count == 0)
-                {
-                    SetStatus($"Import skipped: all {skipped} playlists already exist.", ItemStatus.Warning);
-                    return;
-                }
+                var overwrite = this.Options.OverwriteExisting;
 
                 var user = GetUser();
-                await playlistService.ImportPlaylists(user, toImport);
+                await playlistService.ImportPlaylists(user, playlists, overwrite);
 
-                var msg = skipped > 0
-                    ? $"Import complete: {toImport.Count} imported, {skipped} skipped (already exist)."
-                    : $"Import complete: {toImport.Count} playlists imported.";
+                var msg = $"Import complete: {playlists.Count} playlists processed.";
 
                 SetStatus(msg, ItemStatus.Succeeded);
                 HandlePreview();
@@ -220,6 +233,15 @@ namespace EmbyPlaylistManager.UI
                 logger.ErrorException("Import failed", ex);
                 SetStatus($"Import failed: {ex.Message}", ItemStatus.Failed);
             }
+        }
+
+        private string GetPreviewUniqueName(string baseName, HashSet<string> existingNames)
+        {
+            var candidate = baseName;
+            var i = 1;
+            while (existingNames.Contains(candidate))
+                candidate = $"{baseName} ({i++})";
+            return candidate;
         }
 
         private HashSet<string> GetExistingPlaylistNames()
