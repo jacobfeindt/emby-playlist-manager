@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using EmbyPlaylistManager.Storage;
 using EmbyPlaylistManager.UI;
+using MediaBrowser.Common.Configuration;
 using MediaBrowser.Common.Plugins;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Library;
@@ -24,10 +25,12 @@ namespace EmbyPlaylistManager
         private readonly ILogger _logger;
         private readonly OptionsStore _optionsStore;
         private readonly PlaylistService _playlistService;
+        private readonly ShadowPlaylistService _shadowService;
         private List<IPluginUIPageController> _pages;
 
         public OptionsStore OptionsStore => _optionsStore;
         public PlaylistService PlaylistService => _playlistService;
+        public ShadowPlaylistService ShadowService => _shadowService;
 
         public Plugin(
             IServerApplicationHost appHost,
@@ -41,6 +44,8 @@ namespace EmbyPlaylistManager
             _logger = logManager.GetLogger(PluginName);
             _optionsStore = new OptionsStore(appHost, _logger, PluginName);
             _playlistService = new PlaylistService(libraryManager, playlistManager, _logger);
+            var appPaths = appHost.Resolve<IApplicationPaths>();
+            _shadowService = new ShadowPlaylistService(libraryManager, appPaths, _logger);
             _logger.Info("Playlist Manager plugin loaded.");
         }
 
@@ -71,6 +76,7 @@ namespace EmbyPlaylistManager
                             _appHost.Resolve<IUserManager>(),
                             _libraryManager,
                             _playlistService,
+                            _shadowService,
                             _logger)
                     };
                 }

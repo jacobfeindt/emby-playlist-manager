@@ -26,6 +26,11 @@ namespace EmbyPlaylistManager
             _logger = logger;
         }
 
+        public void AddToPlaylist(long playlistInternalId, BaseItem item, User user)
+        {
+            _playlistManager.AddToPlaylist(playlistInternalId, new[] { item.InternalId }, user);
+        }
+
         public HashSet<string> GetExistingPlaylistNames(User user)
         {
             var existing = _libraryManager.GetItemList(new InternalItemsQuery(user)

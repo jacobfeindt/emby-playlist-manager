@@ -17,6 +17,7 @@ namespace EmbyPlaylistManager.UI
         private readonly IUserManager userManager;
         private readonly ILibraryManager libraryManager;
         private readonly PlaylistService playlistService;
+        private readonly ShadowPlaylistService shadowService;
         private readonly ILogger logger;
 
         public PageController(
@@ -26,6 +27,7 @@ namespace EmbyPlaylistManager.UI
             IUserManager userManager,
             ILibraryManager libraryManager,
             PlaylistService playlistService,
+            ShadowPlaylistService shadowService,
             ILogger logger)
             : base(pluginInfo.Id)
         {
@@ -35,6 +37,7 @@ namespace EmbyPlaylistManager.UI
             this.userManager = userManager;
             this.libraryManager = libraryManager;
             this.playlistService = playlistService;
+            this.shadowService = shadowService;
             this.logger = logger;
 
             this.PageInfo = new PluginPageInfo
@@ -58,6 +61,7 @@ namespace EmbyPlaylistManager.UI
                 this.userManager,
                 this.libraryManager,
                 this.playlistService,
+                this.shadowService,
                 this.logger);
             return Task.FromResult(view);
         }

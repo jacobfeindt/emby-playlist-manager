@@ -203,27 +203,12 @@ Confirmed in: `MediaBrowser.Controller.dll`
 ```csharp
 public class PluginEntryPoint : IServerEntryPoint
 {
-    // Inject dependencies via constructor — same DI as Plugin.cs
-    public PluginEntryPoint(IPlaylistManager playlistManager, ILibraryManager libraryManager, ...)
-    { }
-
-    public Task Run()
+    public void Run()   // void — NOT Task (confirmed by build)
     {
-        // Subscribe to events here — this is the correct and only place
-        _playlistManager.PlaylistItemsAdded   += OnPlaylistChanged;
-        _playlistManager.PlaylistItemsRemoved += OnPlaylistChanged;
-        _playlistManager.PlaylistItemsMoved   += OnPlaylistChanged;
-        _libraryManager.ItemAdded             += OnItemChanged;
-        _libraryManager.ItemUpdated           += OnItemChanged;  // debounce this one
-        return Task.CompletedTask;
+        // Subscribe to events here
     }
 
-    public void Dispose()
-    {
-        // Unsubscribe
-        _playlistManager.PlaylistItemsAdded   -= OnPlaylistChanged;
-        // etc.
-    }
+    public void Dispose() { /* unsubscribe */ }
 }
 ```
 

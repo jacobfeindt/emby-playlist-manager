@@ -24,6 +24,7 @@ namespace EmbyPlaylistManager.UI
         private readonly IUserManager userManager;
         private readonly ILibraryManager libraryManager;
         private readonly PlaylistService playlistService;
+        private readonly ShadowPlaylistService shadowService;
         private readonly ILogger logger;
 
         public PluginPageView(
@@ -33,6 +34,7 @@ namespace EmbyPlaylistManager.UI
             IUserManager userManager,
             ILibraryManager libraryManager,
             PlaylistService playlistService,
+            ShadowPlaylistService shadowService,
             ILogger logger)
             : base(pluginInfo.Id)
         {
@@ -41,6 +43,7 @@ namespace EmbyPlaylistManager.UI
             this.userManager = userManager;
             this.libraryManager = libraryManager;
             this.playlistService = playlistService;
+            this.shadowService = shadowService;
             this.logger = logger;
             this.ContentData = store.GetOptions();
         }
@@ -86,6 +89,22 @@ namespace EmbyPlaylistManager.UI
                 case "Preview":
                     HandlePreview();
                     return Task.FromResult<IPluginUIView>(this);
+                case "Scan":
+                    if (!this.Options.EnableShadow)
+                    {
+                        SetShadowStatus("Shadow system is disabled. Enable it first.", ItemStatus.Warning);
+                        return Task.FromResult<IPluginUIView>(this);
+                    }
+                    Task.Run(HandleScan);
+                    return Task.FromResult<IPluginUIView>(this);
+                case "RepairAll":
+                    if (!this.Options.EnableShadow)
+                    {
+                        SetShadowStatus("Shadow system is disabled. Enable it first.", ItemStatus.Warning);
+                        return Task.FromResult<IPluginUIView>(this);
+                    }
+                    Task.Run(HandleRepairAll);
+                    return Task.FromResult<IPluginUIView>(this);
             }
             return base.RunCommand(itemId, commandId, data);
         }
@@ -96,6 +115,9 @@ namespace EmbyPlaylistManager.UI
             this.Options.PreviewList.Clear();
             this.Options.Status.StatusText = "No operation started yet.";
             this.Options.Status.Status = ItemStatus.Unavailable;
+            this.Options.RepairPreviewList.Clear();
+            this.Options.ShadowStatus.StatusText = this.Options.EnableShadow ? "Shadow system enabled." : "Shadow system is disabled.";
+            this.Options.ShadowStatus.Status = this.Options.EnableShadow ? ItemStatus.Succeeded : ItemStatus.Unavailable;
             store.SetOptions(this.Options);
             return base.OnSaveCommand(itemId, commandId, data);
         }
@@ -276,7 +298,7 @@ namespace EmbyPlaylistManager.UI
         {
             return this.User != null
                 ? userManager.GetUserById(this.User.Id)
-                : userManager.GetUserList(null)[0];
+                : userManager.GetUserList(new MediaBrowser.Model.Querying.UserQuery())[0];
         }
 
         private void SetStatus(string message, ItemStatus status)
@@ -286,6 +308,217 @@ namespace EmbyPlaylistManager.UI
             this.Options.ExportButton.IsEnabled = status != ItemStatus.InProgress;
             this.Options.ImportButton.IsEnabled = status != ItemStatus.InProgress;
             RaiseUIViewInfoChanged();
+        }
+
+        private void SetShadowStatus(string message, ItemStatus status)
+        {
+            this.Options.ShadowStatus.StatusText = message;
+            this.Options.ShadowStatus.Status = status;
+            this.Options.ScanButton.IsEnabled = status != ItemStatus.InProgress;
+            this.Options.RepairAllButton.IsEnabled = status != ItemStatus.InProgress;
+            RaiseUIViewInfoChanged();
+        }
+
+        private async Task HandleScan()
+        {
+            SetShadowStatus("Scanning for broken links...", ItemStatus.InProgress);
+
+            try
+            {
+                var user = GetUser();
+                var shadows = shadowService.GetAllShadows();
+                this.Options.RepairPreviewList.Clear();
+
+                if (shadows.Count == 0)
+                {
+                    SetShadowStatus("No shadow files found. Save settings with shadow enabled to initialize.", ItemStatus.Warning);
+                    return;
+                }
+
+                int totalBroken = 0;
+
+                foreach (var shadow in shadows)
+                {
+                    var livePlaylist = libraryManager.GetItemList(new InternalItemsQuery(user)
+                    {
+                        IncludeItemTypes = new[] { "Playlist" }
+                    }).FirstOrDefault(p => string.Equals(p.Name, shadow.PlaylistName, StringComparison.OrdinalIgnoreCase));
+
+                    if (livePlaylist == null)
+                    {
+                        this.Options.RepairPreviewList.Add(new GenericListItem
+                        {
+                            PrimaryText = shadow.PlaylistName,
+                            SecondaryText = "Playlist not found on server — skipped",
+                            Status = ItemStatus.Warning,
+                            Icon = IconNames.warning,
+                            IconMode = ItemListIconMode.SmallRegular
+                        });
+                        continue;
+                    }
+
+                    var liveItems = libraryManager.GetItemList(new InternalItemsQuery(user)
+                    {
+                        ListIds = new[] { livePlaylist.InternalId }
+                    });
+
+                    logger.Info("Repair scan: Playlist '{0}': {1} live items, {2} shadow items",
+                        shadow.PlaylistName, liveItems.Length, shadow.Items.Count);
+
+                    foreach (var shadowItem in shadow.Items)
+                    {
+                        var present = liveItems.Any(live =>
+                            shadowItem.ProviderIds.Any(kvp =>
+                                live.ProviderIds != null &&
+                                live.ProviderIds.TryGetValue(kvp.Key, out var val) && val == kvp.Value));
+
+                        var providerStr = shadowItem.ProviderIds.Count > 0
+                            ? string.Join(", ", shadowItem.ProviderIds.Select(k => $"{k.Key}={k.Value}"))
+                            : "no provider IDs";
+
+                        if (!present)
+                        {
+                            logger.Info("  Broken: '{0}' — not in live playlist [{1}]", shadowItem.Name, providerStr);
+                            this.Options.RepairPreviewList.Add(new GenericListItem
+                            {
+                                PrimaryText = shadow.PlaylistName,
+                                SecondaryText = $"{shadowItem.Name} — broken [{providerStr}]",
+                                Status = ItemStatus.Failed,
+                                Icon = IconNames.warning,
+                                IconMode = ItemListIconMode.SmallRegular
+                            });
+                            totalBroken++;
+                        }
+                        else
+                        {
+                            logger.Info("  OK: '{0}' — present in live playlist", shadowItem.Name);
+                        }
+                    }
+                }
+
+                logger.Info("Repair scan complete. {0} broken items across {1} playlists.", totalBroken, shadows.Count);
+                var msg = totalBroken == 0
+                    ? $"Scan complete: no broken links found across {shadows.Count} playlists."
+                    : $"Scan complete: {totalBroken} broken items found. Click Repair All to fix.";
+                SetShadowStatus(msg, totalBroken == 0 ? ItemStatus.Succeeded : ItemStatus.Warning);
+            }
+            catch (Exception ex)
+            {
+                logger.ErrorException("Scan failed", ex);
+                SetShadowStatus($"Scan failed: {ex.Message}", ItemStatus.Failed);
+            }
+        }
+
+        private async Task HandleRepairAll()
+        {
+            SetShadowStatus("Repairing...", ItemStatus.InProgress);
+
+            try
+            {
+                var user = GetUser();
+                var shadows = shadowService.GetAllShadows();
+
+                if (shadows.Count == 0)
+                {
+                    SetShadowStatus("No shadow files found.", ItemStatus.Warning);
+                    return;
+                }
+
+                int totalFixed = 0, totalMissing = 0;
+
+                foreach (var shadow in shadows)
+                {
+                    var livePlaylist = libraryManager.GetItemList(new InternalItemsQuery(user)
+                    {
+                        IncludeItemTypes = new[] { "Playlist" }
+                    }).FirstOrDefault(p => string.Equals(p.Name, shadow.PlaylistName, StringComparison.OrdinalIgnoreCase));
+
+                    if (livePlaylist == null) continue;
+
+                    var liveItems = libraryManager.GetItemList(new InternalItemsQuery(user)
+                    {
+                        ListIds = new[] { livePlaylist.InternalId }
+                    });
+
+                    foreach (var shadowItem in shadow.Items)
+                    {
+                        var present = liveItems.Any(live =>
+                            shadowItem.ProviderIds.Any(kvp =>
+                                live.ProviderIds != null &&
+                                live.ProviderIds.TryGetValue(kvp.Key, out var val) && val == kvp.Value));
+
+                        if (present) continue;
+
+                        BaseItem resolved = null;
+                        string resolvedVia = null;
+
+                        foreach (var kvp in shadowItem.ProviderIds.OrderBy(k =>
+                                      k.Key.Equals("Imdb", StringComparison.OrdinalIgnoreCase) ? 0 :
+                                      k.Key.Equals("Tmdb", StringComparison.OrdinalIgnoreCase) ? 1 : 2))
+                        {
+                            resolved = libraryManager.GetItemList(new InternalItemsQuery(user)
+                            {
+                                AnyProviderIdEquals = new[] { new KeyValuePair<string, string>(kvp.Key, kvp.Value) }
+                            }).FirstOrDefault();
+                            if (resolved != null) { resolvedVia = $"{kvp.Key}={kvp.Value}"; break; }
+                        }
+
+                        if (resolved == null && (shadowItem.SeriesTmdbId.HasValue || shadowItem.SeriesTvdbId.HasValue)
+                            && shadowItem.Season.HasValue && shadowItem.Episode.HasValue)
+                        {
+                            var seriesKvp = shadowItem.SeriesTmdbId.HasValue
+                                ? new KeyValuePair<string, string>("Tmdb", shadowItem.SeriesTmdbId.Value.ToString())
+                                : new KeyValuePair<string, string>("Tvdb", shadowItem.SeriesTvdbId.Value.ToString());
+
+                            var series = libraryManager.GetItemList(new InternalItemsQuery(user)
+                            {
+                                IncludeItemTypes = new[] { "Series" },
+                                AnyProviderIdEquals = new[] { seriesKvp }
+                            }).FirstOrDefault();
+
+                            if (series != null)
+                            {
+                                resolved = libraryManager.GetItemList(new InternalItemsQuery(user)
+                                {
+                                    AncestorIds = new[] { series.InternalId },
+                                    IncludeItemTypes = new[] { "Episode" },
+                                    ParentIndexNumber = shadowItem.Season,
+                                    IndexNumber = shadowItem.Episode
+                                }).FirstOrDefault();
+                                if (resolved != null)
+                                    resolvedVia = $"series {seriesKvp.Key}={seriesKvp.Value} S{shadowItem.Season}E{shadowItem.Episode}";
+                            }
+                        }
+
+                        if (resolved != null)
+                        {
+                            playlistService.AddToPlaylist(livePlaylist.InternalId, resolved, user);
+                            logger.Info("  Fixed: '{0}' — re-resolved via {1}, added to '{2}'", shadowItem.Name, resolvedVia, shadow.PlaylistName);
+                            totalFixed++;
+                        }
+                        else
+                        {
+                            var providerStr = shadowItem.ProviderIds.Count > 0
+                                ? string.Join(", ", shadowItem.ProviderIds.Select(k => $"{k.Key}={k.Value}"))
+                                : "no provider IDs";
+                            logger.Warn("  Missing: '{0}' — not found in library [{1}]", shadowItem.Name, providerStr);
+                            totalMissing++;
+                        }
+                    }
+                }
+
+                logger.Info("Repair complete. Fixed: {0}, Still missing: {1}.", totalFixed, totalMissing);
+                SetShadowStatus(
+                    $"Repair complete. Fixed: {totalFixed}, Still missing: {totalMissing}.",
+                    totalMissing == 0 ? ItemStatus.Succeeded : ItemStatus.Warning);
+
+                await HandleScan();
+            }
+            catch (Exception ex)
+            {
+                logger.ErrorException("Repair failed", ex);
+                SetShadowStatus($"Repair failed: {ex.Message}", ItemStatus.Failed);
+            }
         }
 
         private static bool IsDirectoryWritable(string path)
