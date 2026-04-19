@@ -19,15 +19,18 @@ An Emby Server plugin for managing playlists — export, import, and automatic r
 - Maintains a continuously updated JSON copy of every playlist in the background
 - Updates automatically on every playlist change event — no manual exports needed
 - On first enable, initializes shadow files from all existing playlists
+- On every startup, automatically initializes shadows for any new playlists that don't have one yet
 - Enables one-click repair after Sonarr/Radarr renames, library moves, or re-scans
-- **Scan** shows full state per playlist: GUID match, item counts, projected action
+- **Scan** shows every playlist — shadowed and unshadowed — with GUID, path, and shadow file info for easy debugging
 - **Safe mode** (default): only adds missing items, never removes or replaces
 - **Full Restore mode**: treats shadow as authoritative, rebuilds playlist from shadow
+- **Repair All** also initializes shadows for any unshadowed playlists found during the run
 - Unresolvable items listed with provider IDs for Radarr/Sonarr lookup
 - Export missing items to JSON — compatible with Import if media is found later
 - Weekly scheduled repair task (Dashboard → Scheduled Tasks → Playlist Manager)
 - Shadow backup copies stored in `userplaylists` — included in MBBackup automatically
 - On restore, shadow files auto-promoted from backup copies on startup
+- Stale shadow files (from deleted/recreated playlists) cleaned up automatically on startup and on write
 - Enable/disable toggle — off by default, zero performance impact when disabled
 
 ### General
@@ -134,14 +137,16 @@ The PostBuild step automatically copies the DLL to `%AppData%\Emby-Server\progra
 - Click **Import Playlists**
 
 ### Shadow Playlists / Repair
-- Toggle **Enable Shadow Playlists** on and save — shadow files are written immediately
-- **Scan for Issues** — shows the full state of each playlist vs its shadow:
-  - GUID match status, item counts, what action will be taken
-  - Each row ends with `→ Safe: ...` or `→ Full Restore: ...` so you know exactly what Repair All will do
+- Toggle **Enable Shadow Playlists** on and save — shadow files are written immediately for all playlists
+- **Scan for Issues** — shows every playlist (shadowed and unshadowed) with:
+  - Short GUID for unambiguous identification when duplicate names exist
+  - Shadow filename and playlist folder path for debugging
+  - Item counts, GUID match status, and projected action per playlist
+  - Unshadowed playlists shown with `ℹ` — run Repair All to initialize, or they track automatically on next change
 - **Full Restore Mode** toggle — off by default (Safe)
   - Safe: only adds missing items, never removes or replaces existing items
   - Full Restore: treats shadow as authoritative — clears and rebuilds playlist contents from shadow
-- **Repair All** — fixes all issues found by scan according to the current mode
+- **Repair All** — fixes all issues and initializes shadows for any unshadowed playlists
 - **Unresolvable Items** — items that could not be matched in the library after repair, shown with provider IDs for easy Radarr/Sonarr lookup
 - **Export Missing Items** — saves unresolvable items to a JSON file in the export folder; compatible with the Import feature if the media is later found on another server
 - Automated repair also runs weekly via Dashboard → Scheduled Tasks → Playlist Manager: Repair Broken Links
@@ -244,7 +249,7 @@ Each export file is an array of playlist objects. `ProviderIds` captures all IDs
 - Items with no provider IDs in Emby (unscraped media) will not resolve on import or repair and are logged as missing
 - Collision detection is name-based — renaming a playlist before import will allow it through
 - File picker pre-populates with the full saved path including filename — clear the filename portion before browsing to a new file
-- Shadow system requires the plugin to be running to track changes — playlists modified while the plugin is unloaded will be out of sync until the next manual export or re-enable
+- Shadow system requires the plugin to be running to track changes — playlists modified while the plugin is unloaded will be out of sync until the next Repair All or restart
 
 ## Developer Reference
 
