@@ -32,7 +32,6 @@ jobs:
             "system/MediaBrowser.Controller.dll" \
             "system/MediaBrowser.Model.dll" \
             "system/Emby.Web.GenericEdit.dll" \
-            "system/System.Memory.dll" \
             -d /tmp/emby-system
           ls -la /tmp/emby-system
 
