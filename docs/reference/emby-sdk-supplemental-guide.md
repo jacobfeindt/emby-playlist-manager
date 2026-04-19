@@ -255,6 +255,8 @@ File is saved as `{pluginName}.json` in `PluginConfigurationsPath`. Options that
 
 | Issue | Detail |
 |---|---|
+| Emby playlist name deduplication | When `CreatePlaylist` is called with a name that already exists, Emby creates the folder as `{Name} [playlist] - 1`, `- 2` etc. but the playlist's internal `Name` property still returns the original name. Multiple playlists can share the same `Name` — never use name alone to identify a specific playlist. Always match by `Id` (GUID) first, fall back to name only when GUID is unavailable (e.g. after a restore). |
+| Shadow deduplication by name | Never delete shadow files based on playlist name matching alone — users can have multiple playlists with the same name. Only delete a shadow when you have explicit certainty it is stale (e.g. you just recreated the playlist and hold the new GUID). |
 | `AddToPlaylist` is void | Do not await — it returns void, not Task |
 | `IsPublic` on `PlaylistCreationRequest` | `true` = shared `Playlists` folder; `false`/omitted = `UserPlaylists` private to `User`. Not in XML docs but confirmed in DLL. Always set `true` on import. |
 | `OwnerUserId` / `LinkedUserIds` don't exist | Emby has no per-playlist owner ID — ownership is `IsPublic` + which folder the playlist lives in |
