@@ -1,0 +1,72 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Download Emby Server DLLs
+        run: |
+          mkdir -p /tmp/emby-system
+          curl -L "https://github.com/MediaBrowser/Emby.Releases/releases/download/4.9.3.0/embyserver-netcore_4.9.3.0.zip" \
+            -o /tmp/emby.zip
+          unzip -j /tmp/emby.zip \
+            "system/MediaBrowser.Common.dll" \
+            "system/MediaBrowser.Controller.dll" \
+            "system/MediaBrowser.Model.dll" \
+            "system/Emby.Web.GenericEdit.dll" \
+            "system/System.Memory.dll" \
+            -d /tmp/emby-system
+          ls -la /tmp/emby-system
+
+      - name: Update version in csproj
+        run: |
+          sed -i "s|<AssemblyVersion>.*</AssemblyVersion>|<AssemblyVersion>${{ steps.version.outputs.VERSION }}.0</AssemblyVersion>|" \
+            emby-playlist-manager/EmbyPlaylistManager.csproj
+          sed -i "s|<FileVersion>.*</FileVersion>|<FileVersion>${{ steps.version.outputs.VERSION }}.0</FileVersion>|" \
+            emby-playlist-manager/EmbyPlaylistManager.csproj
+
+      - name: Build
+        run: |
+          dotnet build emby-playlist-manager/EmbyPlaylistManager.csproj \
+            --configuration Release \
+            -p:EmbySystemPath=/tmp/emby-system \
+            -p:PostBuildEvent=""
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Emby Playlist Manager ${{ github.ref_name }}
+          body: |
+            ## Emby Playlist Manager ${{ github.ref_name }}
+
+            ### Installation
+            1. Download `EmbyPlaylistManager.dll`
+            2. Copy to your Emby plugins folder: `%AppData%\Emby-Server\programdata\plugins\` (Windows) or `/var/lib/emby/plugins/` (Linux)
+            3. Restart Emby Server
+
+            ### Requirements
+            - Emby Server 4.9.3+
+
+            See [README](https://github.com/${{ github.repository }}/blob/main/README.md) for full usage instructions.
+          files: |
+            emby-playlist-manager/bin/Release/net8.0/EmbyPlaylistManager.dll
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
