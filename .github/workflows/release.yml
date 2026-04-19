@@ -20,7 +20,10 @@ jobs:
 
       - name: Extract version from tag
         id: version
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+        run: |
+          TAG=${GITHUB_REF_NAME#v}
+          echo "TAG=$TAG" >> $GITHUB_OUTPUT
+          echo "ASSEMBLY_VERSION=${TAG}.0" >> $GITHUB_OUTPUT
 
       - name: Download Emby Server DLLs
         run: |
@@ -37,9 +40,9 @@ jobs:
 
       - name: Update version in csproj
         run: |
-          sed -i "s|<AssemblyVersion>.*</AssemblyVersion>|<AssemblyVersion>${{ steps.version.outputs.VERSION }}.0</AssemblyVersion>|" \
+          sed -i "s|<AssemblyVersion>.*</AssemblyVersion>|<AssemblyVersion>${{ steps.version.outputs.ASSEMBLY_VERSION }}</AssemblyVersion>|" \
             emby-playlist-manager/EmbyPlaylistManager.csproj
-          sed -i "s|<FileVersion>.*</FileVersion>|<FileVersion>${{ steps.version.outputs.VERSION }}.0</FileVersion>|" \
+          sed -i "s|<FileVersion>.*</FileVersion>|<FileVersion>${{ steps.version.outputs.ASSEMBLY_VERSION }}</FileVersion>|" \
             emby-playlist-manager/EmbyPlaylistManager.csproj
 
       - name: Build
