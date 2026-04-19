@@ -432,28 +432,32 @@ namespace EmbyPlaylistManager.UI
                     IncludeItemTypes = new[] { "Playlist" }
                 });
 
+                // Track which live playlists are covered by a shadow
+                var shadowedIds = new HashSet<Guid>(shadows.Select(s => s.PlaylistId));
+                var unshadowed = allPlaylists
+                    .Where(p => !shadowedIds.Contains(p.Id))
+                    .ToList();
+
                 int totalIssues = 0;
 
                 foreach (var shadow in shadows)
                 {
-                    // GUID match
                     var byGuid = shadow.PlaylistId != Guid.Empty
                         ? allPlaylists.FirstOrDefault(p => p.Id == shadow.PlaylistId)
                         : null;
-
-                    // Name matches (may be multiple)
                     var byName = allPlaylists
                         .Where(p => string.Equals(p.Name, shadow.PlaylistName, StringComparison.OrdinalIgnoreCase))
                         .ToList();
+                    var multipleMatches = byName.Count > 1;
+                    var shortId = shadow.PlaylistId.ToString("N").Substring(0, 8);
 
                     if (byGuid == null && byName.Count == 0)
                     {
-                        // Playlist missing entirely
-                        logger.Info("Scan: '{0}' — missing entirely. {1} shadow items.", shadow.PlaylistName, shadow.Items.Count);
+                        logger.Info("Scan: '{0}' [{1}] — missing entirely. {2} shadow items.", shadow.PlaylistName, shortId, shadow.Items.Count);
                         this.Options.RepairPreviewList.Add(new GenericListItem
                         {
-                            PrimaryText = shadow.PlaylistName,
-                            SecondaryText = $"{shadow.Items.Count} shadow items — playlist missing entirely. Repair will recreate it.",
+                            PrimaryText = $"{shadow.PlaylistName} [{shortId}]",
+                            SecondaryText = $"{shadow.Items.Count} shadow items — playlist missing entirely, Repair will recreate it | Shadow: {shadow.PlaylistName}-{shortId}.json",
                             Status = ItemStatus.Warning,
                             Icon = IconNames.warning,
                             IconMode = ItemListIconMode.SmallRegular
@@ -463,30 +467,24 @@ namespace EmbyPlaylistManager.UI
                     }
 
                     var livePlaylist = byGuid ?? byName.First();
-                    var guidMismatch = byGuid == null && byName.Count > 0;
-                    var multipleMatches = byName.Count > 1;
+                    var guidMismatch = byGuid == null;
+                    var liveShortId = livePlaylist.Id.ToString("N").Substring(0, 8);
+                    var playlistDir = livePlaylist.Path != null
+                        ? Path.GetFileName(Path.GetDirectoryName(livePlaylist.Path))
+                        : "unknown";
 
                     var liveItems = libraryManager.GetItemList(new InternalItemsQuery(user)
                     {
                         ListIds = new[] { livePlaylist.InternalId }
                     });
 
-                    var missingFromLive = shadow.Items.Where(si =>
-                        !liveItems.Any(live =>
-                            si.ProviderIds.Any(kvp =>
-                                live.ProviderIds != null &&
-                                live.ProviderIds.TryGetValue(kvp.Key, out var val) && val == kvp.Value)))
-                        .ToList();
-
-                    var extraInLive = liveItems.Length - (shadow.Items.Count - missingFromLive.Count);
-
                     if (shadow.Items.Count == 0)
                     {
-                        logger.Info("Scan: '{0}' — shadow is empty, skipping.", shadow.PlaylistName);
+                        logger.Info("Scan: '{0}' [{1}] — shadow is empty.", shadow.PlaylistName, shortId);
                         this.Options.RepairPreviewList.Add(new GenericListItem
                         {
-                            PrimaryText = shadow.PlaylistName,
-                            SecondaryText = "Shadow is empty — no action will be taken",
+                            PrimaryText = $"{shadow.PlaylistName} [{shortId}]",
+                            SecondaryText = $"Shadow is empty — no action will be taken | Playlist: {playlistDir}",
                             Status = ItemStatus.Warning,
                             Icon = IconNames.warning,
                             IconMode = ItemListIconMode.SmallRegular
@@ -495,13 +493,22 @@ namespace EmbyPlaylistManager.UI
                         continue;
                     }
 
-                    if (!guidMismatch && !multipleMatches && missingFromLive.Count == 0)
+                    var missingFromLive = shadow.Items.Where(si =>
+                        !liveItems.Any(live =>
+                            si.ProviderIds.Any(kvp =>
+                                live.ProviderIds != null &&
+                                live.ProviderIds.TryGetValue(kvp.Key, out var val) && val == kvp.Value)))
+                        .ToList();
+                    var extraInLive = liveItems.Length - (shadow.Items.Count - missingFromLive.Count);
+                    var nameNote = multipleMatches ? $", {byName.Count} playlists share this name" : "";
+
+                    if (!guidMismatch && missingFromLive.Count == 0)
                     {
-                        logger.Info("Scan: '{0}' — OK. {1} items match.", shadow.PlaylistName, shadow.Items.Count);
+                        logger.Info("Scan: '{0}' [{1}] — OK. {2} items match.", shadow.PlaylistName, shortId, shadow.Items.Count);
                         this.Options.RepairPreviewList.Add(new GenericListItem
                         {
-                            PrimaryText = shadow.PlaylistName,
-                            SecondaryText = $"OK — {shadow.Items.Count} items present",
+                            PrimaryText = $"{shadow.PlaylistName} [{shortId}]",
+                            SecondaryText = $"OK — {shadow.Items.Count} items present{nameNote} | Shadow: {shadow.PlaylistName}-{shortId}.json | Playlist: {playlistDir}",
                             Status = ItemStatus.Succeeded,
                             Icon = IconNames.check_circle,
                             IconMode = ItemListIconMode.SmallRegular
@@ -509,27 +516,23 @@ namespace EmbyPlaylistManager.UI
                         continue;
                     }
 
-                    // Build descriptive status
                     var details = new List<string>();
                     if (guidMismatch)
-                        details.Add($"GUID mismatch (shadow: {shadow.PlaylistId:N[..8]}, live: {livePlaylist.Id:N[..8]})");
-                    if (multipleMatches)
-                        details.Add($"{byName.Count} live playlists share this name");
+                        details.Add($"GUID mismatch (shadow: {shortId}, live: {liveShortId})");
                     if (missingFromLive.Count > 0)
-                        details.Add($"{missingFromLive.Count} items missing from live playlist");
+                        details.Add($"{missingFromLive.Count} items missing");
                     if (fullRestore && extraInLive > 0)
-                        details.Add($"{extraInLive} live items not in shadow (will be removed in Full Restore)");
+                        details.Add($"{extraInLive} live items not in shadow (will be removed)");
 
                     var action = fullRestore
                         ? "Full Restore: replace live contents with shadow"
                         : $"Safe: add {missingFromLive.Count} missing items";
 
-                    logger.Info("Scan: '{0}' — {1}. Action: {2}", shadow.PlaylistName, string.Join(", ", details), action);
-
+                    logger.Info("Scan: '{0}' [{1}] — {2}. Action: {3}", shadow.PlaylistName, shortId, string.Join(", ", details), action);
                     this.Options.RepairPreviewList.Add(new GenericListItem
                     {
-                        PrimaryText = shadow.PlaylistName,
-                        SecondaryText = $"{string.Join(" | ", details)} → {action}",
+                        PrimaryText = $"{shadow.PlaylistName} [{shortId}]",
+                        SecondaryText = $"{string.Join(" | ", details)} → {action} | Shadow: {shadow.PlaylistName}-{shortId}.json | Playlist: {playlistDir}",
                         Status = ItemStatus.Warning,
                         Icon = IconNames.warning,
                         IconMode = ItemListIconMode.SmallRegular
@@ -537,9 +540,28 @@ namespace EmbyPlaylistManager.UI
                     totalIssues++;
                 }
 
+                // Show live playlists with no shadow
+                foreach (var p in unshadowed)
+                {
+                    var liveShortId = p.Id.ToString("N").Substring(0, 8);
+                    var playlistDir = p.Path != null
+                        ? Path.GetFileName(Path.GetDirectoryName(p.Path))
+                        : "unknown";
+                    logger.Info("Scan: '{0}' [{1}] — no shadow yet.", p.Name, liveShortId);
+                    this.Options.RepairPreviewList.Add(new GenericListItem
+                    {
+                        PrimaryText = $"{p.Name} [{liveShortId}]",
+                        SecondaryText = $"No shadow — run Repair All to initialize, or will be tracked automatically after next playlist change | Playlist: {playlistDir}",
+                        Status = ItemStatus.Unavailable,
+                        Icon = IconNames.info,
+                        IconMode = ItemListIconMode.SmallRegular
+                    });
+                }
+
+                var total = shadows.Count + unshadowed.Count;
                 var msg = totalIssues == 0
-                    ? $"Scan complete: no issues found across {shadows.Count} playlists."
-                    : $"Scan complete: {totalIssues} playlists need attention. Click Repair All to fix.";
+                    ? $"Scan complete: {total} playlists, no issues found."
+                    : $"Scan complete: {total} playlists, {totalIssues} need attention. Click Repair All to fix.";
                 SetShadowStatus(msg, totalIssues == 0 ? ItemStatus.Succeeded : ItemStatus.Warning);
             }
             catch (Exception ex)
@@ -684,11 +706,21 @@ namespace EmbyPlaylistManager.UI
                 }
 
                 logger.Info("Repair complete. Fixed: {0}, Still missing: {1}.", totalFixed, totalMissing);
+
+                // Initialize shadows for any playlists that don't have one yet
+                var shadowedIds = new HashSet<Guid>(shadows.Select(s => s.PlaylistId));
+                var unshadowed = allPlaylists.Where(p => !shadowedIds.Contains(p.Id)).ToArray();
+                foreach (var p in unshadowed)
+                {
+                    shadowService.UpdateShadow(user, p, "RepairAll-InitMissing", cleanDuplicates: false);
+                    logger.Info("Repair: initialized shadow for unshadowed playlist '{0}'.", p.Name);
+                }
+
                 var msg = $"Repair complete. Fixed: {totalFixed}" +
+                    (unshadowed.Length > 0 ? $", {unshadowed.Length} new shadows created" : "") +
                     (totalMissing > 0 ? $", {totalMissing} still missing (see Unresolvable Items below)." : ".");
                 SetShadowStatus(msg, totalMissing == 0 ? ItemStatus.Succeeded : ItemStatus.Warning);
-
-                await HandleScan();
+                RaiseUIViewInfoChanged();
             }
             catch (Exception ex)
             {

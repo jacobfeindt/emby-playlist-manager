@@ -79,6 +79,21 @@ namespace EmbyPlaylistManager
                     }
                 });
             }
+            else
+            {
+                Task.Run(() =>
+                {
+                    try
+                    {
+                        var user = GetAdminUser();
+                        if (user != null) _plugin.ShadowService.InitializeMissingShadows(user);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.ErrorException("Shadow missing initialization failed", ex);
+                    }
+                });
+            }
         }
 
         public void Dispose()
