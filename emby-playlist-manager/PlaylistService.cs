@@ -31,6 +31,43 @@ namespace EmbyPlaylistManager
             _playlistManager.AddToPlaylist(playlistInternalId, new[] { item.InternalId }, user);
         }
 
+        public async Task ClearPlaylist(long playlistInternalId, BaseItem[] items)
+        {
+            if (items.Length == 0) return;
+            await _playlistManager.RemoveFromPlaylist(playlistInternalId, items.Select(i => i.InternalId).ToArray());
+        }
+
+        public async Task<BaseItem> CreatePlaylistFromShadow(User user, PlaylistExportDto shadow)
+        {
+            try
+            {
+                var createResult = await _playlistManager.CreatePlaylist(new PlaylistCreationRequest
+                {
+                    Name = shadow.PlaylistName,
+                    User = user,
+                    IsPublic = true
+                });
+
+                if (Guid.TryParse(createResult.Id, out var guid))
+                {
+                    var item = _libraryManager.GetItemById(guid);
+                    if (item != null)
+                    {
+                        _logger.Info("Recreated playlist '{0}' from shadow (actual name: '{1}').",
+                            shadow.PlaylistName, item.Name);
+                        return item;
+                    }
+                }
+                _logger.Warn("Could not locate recreated playlist '{0}' by ID.", shadow.PlaylistName);
+                return null;
+            }
+            catch (Exception ex)
+            {
+                _logger.ErrorException("Failed to recreate playlist '{0}' from shadow", ex, shadow.PlaylistName);
+                return null;
+            }
+        }
+
         public HashSet<string> GetExistingPlaylistNames(User user)
         {
             var existing = _libraryManager.GetItemList(new InternalItemsQuery(user)

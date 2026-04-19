@@ -155,6 +155,10 @@ namespace EmbyPlaylistManager.Storage
                 var json = JsonSerializer.Serialize(dto, _jsonOptions);
                 File.WriteAllText(path, json);
 
+                // Clean up any stale shadows for the same playlist name but different GUID
+                // Safe to do here because we just wrote the authoritative version from a live event
+                CleanStaleDuplicates(playlistItem.Name, playlistItem.Id);
+
                 // Backup copy into userplaylists so MBBackup picks it up
                 try
                 {
@@ -252,6 +256,36 @@ namespace EmbyPlaylistManager.Storage
             catch { return true; }
         }
 
+        private void CleanStaleDuplicates(string playlistName, Guid currentId)
+        {
+            try
+            {
+                var safeName = string.Concat(playlistName.Split(Path.GetInvalidFileNameChars()));
+                foreach (var file in Directory.GetFiles(ShadowFolder, $"{safeName}-*.json"))
+                {
+                    var fileId = Path.GetFileNameWithoutExtension(file)
+                        .Substring(safeName.Length + 1); // strip "{name}-"
+                    if (Guid.TryParse(fileId, out var guid) && guid != currentId)
+                    {
+                        try
+                        {
+                            File.Delete(file);
+                            var backupPath = BackupCopyFilePath(playlistName, guid);
+                            if (File.Exists(backupPath)) File.Delete(backupPath);
+                            _logger.Info("Cleaned stale shadow for '{0}' (old ID: {1}).", playlistName, guid);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.ErrorException("Could not delete stale shadow for '{0}'", ex, playlistName);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.ErrorException("CleanStaleDuplicates failed for '{0}'", ex, playlistName);
+            }
+        }
         private string ShadowFilePath(string playlistName, Guid playlistId)
         {
             var safeName = string.Concat(playlistName.Split(Path.GetInvalidFileNameChars()));

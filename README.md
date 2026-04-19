@@ -20,9 +20,14 @@ An Emby Server plugin for managing playlists — export, import, and automatic r
 - Updates automatically on every playlist change event — no manual exports needed
 - On first enable, initializes shadow files from all existing playlists
 - Enables one-click repair after Sonarr/Radarr renames, library moves, or re-scans
-- Scan for broken links — shows exactly which items are missing and why
-- Repair All — re-resolves broken items against the current library and adds them back
+- **Scan** shows full state per playlist: GUID match, item counts, projected action
+- **Safe mode** (default): only adds missing items, never removes or replaces
+- **Full Restore mode**: treats shadow as authoritative, rebuilds playlist from shadow
+- Unresolvable items listed with provider IDs for Radarr/Sonarr lookup
+- Export missing items to JSON — compatible with Import if media is found later
 - Weekly scheduled repair task (Dashboard → Scheduled Tasks → Playlist Manager)
+- Shadow backup copies stored in `userplaylists` — included in MBBackup automatically
+- On restore, shadow files auto-promoted from backup copies on startup
 - Enable/disable toggle — off by default, zero performance impact when disabled
 
 ### General
@@ -128,11 +133,20 @@ The PostBuild step automatically copies the DLL to `%AppData%\Emby-Server\progra
 - Toggle **Overwrite Existing Playlists** to control collision behaviour
 - Click **Import Playlists**
 
-**Shadow Playlists / Repair**
+### Shadow Playlists / Repair
 - Toggle **Enable Shadow Playlists** on and save — shadow files are written immediately
-- Click **Scan for Issues** to see broken links across all playlists
-- Click **Repair All** to re-resolve and restore broken items
+- **Scan for Issues** — shows the full state of each playlist vs its shadow:
+  - GUID match status, item counts, what action will be taken
+  - Each row ends with `→ Safe: ...` or `→ Full Restore: ...` so you know exactly what Repair All will do
+- **Full Restore Mode** toggle — off by default (Safe)
+  - Safe: only adds missing items, never removes or replaces existing items
+  - Full Restore: treats shadow as authoritative — clears and rebuilds playlist contents from shadow
+- **Repair All** — fixes all issues found by scan according to the current mode
+- **Unresolvable Items** — items that could not be matched in the library after repair, shown with provider IDs for easy Radarr/Sonarr lookup
+- **Export Missing Items** — saves unresolvable items to a JSON file in the export folder; compatible with the Import feature if the media is later found on another server
 - Automated repair also runs weekly via Dashboard → Scheduled Tasks → Playlist Manager: Repair Broken Links
+
+> **Per-playlist repair:** The scan gives full visibility into each playlist's state. For playlists that need manual intervention, handle them directly in Emby (delete/recreate), then run Repair All — the shadow will be used to restore contents automatically.
 
 ### Shadow file storage
 

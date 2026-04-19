@@ -105,6 +105,14 @@ namespace EmbyPlaylistManager.UI
                     }
                     Task.Run(HandleRepairAll);
                     return Task.FromResult<IPluginUIView>(this);
+                case "ExportMissing":
+                    if (this.Options.MissingItemsList.Count == 0)
+                    {
+                        SetShadowStatus("No missing items to export. Run Repair All first.", ItemStatus.Warning);
+                        return Task.FromResult<IPluginUIView>(this);
+                    }
+                    Task.Run(HandleExportMissing);
+                    return Task.FromResult<IPluginUIView>(this);
             }
             return base.RunCommand(itemId, commandId, data);
         }
@@ -116,6 +124,7 @@ namespace EmbyPlaylistManager.UI
             this.Options.Status.StatusText = "No operation started yet.";
             this.Options.Status.Status = ItemStatus.Unavailable;
             this.Options.RepairPreviewList.Clear();
+            this.Options.MissingItemsList.Clear();
             this.Options.ShadowStatus.StatusText = this.Options.EnableShadow ? "Shadow system enabled." : "Shadow system is disabled.";
             this.Options.ShadowStatus.Status = this.Options.EnableShadow ? ItemStatus.Succeeded : ItemStatus.Unavailable;
             store.SetOptions(this.Options);
@@ -280,6 +289,25 @@ namespace EmbyPlaylistManager.UI
             }
         }
 
+        private BaseItem FindLivePlaylist(User user, PlaylistExportDto shadow)
+        {
+            var allPlaylists = libraryManager.GetItemList(new InternalItemsQuery(user)
+            {
+                IncludeItemTypes = new[] { "Playlist" }
+            });
+
+            // Match by GUID first — exact, unambiguous
+            if (shadow.PlaylistId != Guid.Empty)
+            {
+                var byId = allPlaylists.FirstOrDefault(p => p.Id == shadow.PlaylistId);
+                if (byId != null) return byId;
+            }
+
+            // Fall back to name — used after restore/migration where GUIDs change
+            return allPlaylists.FirstOrDefault(p =>
+                string.Equals(p.Name, shadow.PlaylistName, StringComparison.OrdinalIgnoreCase));
+        }
+
         private string GetPreviewUniqueName(string baseName, HashSet<string> existingNames)
         {
             var candidate = baseName;
@@ -316,18 +344,82 @@ namespace EmbyPlaylistManager.UI
             this.Options.ShadowStatus.Status = status;
             this.Options.ScanButton.IsEnabled = status != ItemStatus.InProgress;
             this.Options.RepairAllButton.IsEnabled = status != ItemStatus.InProgress;
+            this.Options.ExportMissingButton.IsEnabled = status != ItemStatus.InProgress;
             RaiseUIViewInfoChanged();
+        }
+
+        private async Task HandleExportMissing()
+        {
+            SetShadowStatus("Exporting missing items...", ItemStatus.InProgress);
+            try
+            {
+                if (string.IsNullOrWhiteSpace(this.Options.ExportFolder))
+                {
+                    SetShadowStatus("Export failed: set an Export Output Folder in the Export section first.", ItemStatus.Failed);
+                    return;
+                }
+
+                // Build List<PlaylistExportDto> from MissingItemsList entries
+                // Each PrimaryText is playlist name, SecondaryText is "{name} [{providerIds}]"
+                // Re-read from shadow files to get full PlaylistItemDto objects
+                var shadows = shadowService.GetAllShadows();
+                var user = GetUser();
+                var missingByPlaylist = new Dictionary<string, PlaylistExportDto>(StringComparer.OrdinalIgnoreCase);
+
+                foreach (var item in this.Options.MissingItemsList)
+                {
+                    var playlistName = item.PrimaryText;
+                    var shadow = shadows.FirstOrDefault(s =>
+                        string.Equals(s.PlaylistName, playlistName, StringComparison.OrdinalIgnoreCase));
+                    if (shadow == null) continue;
+
+                    if (!missingByPlaylist.TryGetValue(playlistName, out var dto))
+                    {
+                        dto = new PlaylistExportDto { PlaylistName = playlistName, PlaylistId = shadow.PlaylistId };
+                        missingByPlaylist[playlistName] = dto;
+                    }
+
+                    // Match shadow item by secondary text prefix (name)
+                    var itemName = item.SecondaryText?.Split('[')[0].Trim();
+                    var shadowItem = shadow.Items.FirstOrDefault(i =>
+                        string.Equals(i.Name, itemName, StringComparison.OrdinalIgnoreCase));
+                    if (shadowItem != null) dto.Items.Add(shadowItem);
+                }
+
+                if (missingByPlaylist.Count == 0)
+                {
+                    SetShadowStatus("No missing items to export.", ItemStatus.Warning);
+                    return;
+                }
+
+                var serverName = string.Concat(appHost.FriendlyName.Split(Path.GetInvalidFileNameChars()));
+                var json = JsonSerializer.Serialize(missingByPlaylist.Values.ToList(),
+                    new JsonSerializerOptions { WriteIndented = true });
+                var filePath = Path.Combine(this.Options.ExportFolder,
+                    $"{serverName}-missing-items-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+                await File.WriteAllTextAsync(filePath, json);
+
+                SetShadowStatus($"Exported {missingByPlaylist.Values.Sum(d => d.Items.Count)} missing items to {filePath}",
+                    ItemStatus.Succeeded);
+            }
+            catch (Exception ex)
+            {
+                logger.ErrorException("Export missing items failed", ex);
+                SetShadowStatus($"Export failed: {ex.Message}", ItemStatus.Failed);
+            }
         }
 
         private async Task HandleScan()
         {
-            SetShadowStatus("Scanning for broken links...", ItemStatus.InProgress);
+            SetShadowStatus("Scanning...", ItemStatus.InProgress);
+            this.Options.RepairPreviewList.Clear();
+            RaiseUIViewInfoChanged();
 
             try
             {
                 var user = GetUser();
                 var shadows = shadowService.GetAllShadows();
-                this.Options.RepairPreviewList.Clear();
+                var fullRestore = this.Options.FullRestoreMode;
 
                 if (shadows.Count == 0)
                 {
@@ -335,72 +427,120 @@ namespace EmbyPlaylistManager.UI
                     return;
                 }
 
-                int totalBroken = 0;
+                var allPlaylists = libraryManager.GetItemList(new InternalItemsQuery(user)
+                {
+                    IncludeItemTypes = new[] { "Playlist" }
+                });
+
+                int totalIssues = 0;
 
                 foreach (var shadow in shadows)
                 {
-                    var livePlaylist = libraryManager.GetItemList(new InternalItemsQuery(user)
-                    {
-                        IncludeItemTypes = new[] { "Playlist" }
-                    }).FirstOrDefault(p => string.Equals(p.Name, shadow.PlaylistName, StringComparison.OrdinalIgnoreCase));
+                    // GUID match
+                    var byGuid = shadow.PlaylistId != Guid.Empty
+                        ? allPlaylists.FirstOrDefault(p => p.Id == shadow.PlaylistId)
+                        : null;
 
-                    if (livePlaylist == null)
+                    // Name matches (may be multiple)
+                    var byName = allPlaylists
+                        .Where(p => string.Equals(p.Name, shadow.PlaylistName, StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+
+                    if (byGuid == null && byName.Count == 0)
                     {
+                        // Playlist missing entirely
+                        logger.Info("Scan: '{0}' — missing entirely. {1} shadow items.", shadow.PlaylistName, shadow.Items.Count);
                         this.Options.RepairPreviewList.Add(new GenericListItem
                         {
                             PrimaryText = shadow.PlaylistName,
-                            SecondaryText = "Playlist not found on server — skipped",
+                            SecondaryText = $"{shadow.Items.Count} shadow items — playlist missing entirely. Repair will recreate it.",
                             Status = ItemStatus.Warning,
                             Icon = IconNames.warning,
                             IconMode = ItemListIconMode.SmallRegular
                         });
+                        totalIssues++;
                         continue;
                     }
+
+                    var livePlaylist = byGuid ?? byName.First();
+                    var guidMismatch = byGuid == null && byName.Count > 0;
+                    var multipleMatches = byName.Count > 1;
 
                     var liveItems = libraryManager.GetItemList(new InternalItemsQuery(user)
                     {
                         ListIds = new[] { livePlaylist.InternalId }
                     });
 
-                    logger.Info("Repair scan: Playlist '{0}': {1} live items, {2} shadow items",
-                        shadow.PlaylistName, liveItems.Length, shadow.Items.Count);
-
-                    foreach (var shadowItem in shadow.Items)
-                    {
-                        var present = liveItems.Any(live =>
-                            shadowItem.ProviderIds.Any(kvp =>
+                    var missingFromLive = shadow.Items.Where(si =>
+                        !liveItems.Any(live =>
+                            si.ProviderIds.Any(kvp =>
                                 live.ProviderIds != null &&
-                                live.ProviderIds.TryGetValue(kvp.Key, out var val) && val == kvp.Value));
+                                live.ProviderIds.TryGetValue(kvp.Key, out var val) && val == kvp.Value)))
+                        .ToList();
 
-                        var providerStr = shadowItem.ProviderIds.Count > 0
-                            ? string.Join(", ", shadowItem.ProviderIds.Select(k => $"{k.Key}={k.Value}"))
-                            : "no provider IDs";
+                    var extraInLive = liveItems.Length - (shadow.Items.Count - missingFromLive.Count);
 
-                        if (!present)
+                    if (shadow.Items.Count == 0)
+                    {
+                        logger.Info("Scan: '{0}' — shadow is empty, skipping.", shadow.PlaylistName);
+                        this.Options.RepairPreviewList.Add(new GenericListItem
                         {
-                            logger.Info("  Broken: '{0}' — not in live playlist [{1}]", shadowItem.Name, providerStr);
-                            this.Options.RepairPreviewList.Add(new GenericListItem
-                            {
-                                PrimaryText = shadow.PlaylistName,
-                                SecondaryText = $"{shadowItem.Name} — broken [{providerStr}]",
-                                Status = ItemStatus.Failed,
-                                Icon = IconNames.warning,
-                                IconMode = ItemListIconMode.SmallRegular
-                            });
-                            totalBroken++;
-                        }
-                        else
-                        {
-                            logger.Info("  OK: '{0}' — present in live playlist", shadowItem.Name);
-                        }
+                            PrimaryText = shadow.PlaylistName,
+                            SecondaryText = "Shadow is empty — no action will be taken",
+                            Status = ItemStatus.Warning,
+                            Icon = IconNames.warning,
+                            IconMode = ItemListIconMode.SmallRegular
+                        });
+                        totalIssues++;
+                        continue;
                     }
+
+                    if (!guidMismatch && !multipleMatches && missingFromLive.Count == 0)
+                    {
+                        logger.Info("Scan: '{0}' — OK. {1} items match.", shadow.PlaylistName, shadow.Items.Count);
+                        this.Options.RepairPreviewList.Add(new GenericListItem
+                        {
+                            PrimaryText = shadow.PlaylistName,
+                            SecondaryText = $"OK — {shadow.Items.Count} items present",
+                            Status = ItemStatus.Succeeded,
+                            Icon = IconNames.check_circle,
+                            IconMode = ItemListIconMode.SmallRegular
+                        });
+                        continue;
+                    }
+
+                    // Build descriptive status
+                    var details = new List<string>();
+                    if (guidMismatch)
+                        details.Add($"GUID mismatch (shadow: {shadow.PlaylistId:N[..8]}, live: {livePlaylist.Id:N[..8]})");
+                    if (multipleMatches)
+                        details.Add($"{byName.Count} live playlists share this name");
+                    if (missingFromLive.Count > 0)
+                        details.Add($"{missingFromLive.Count} items missing from live playlist");
+                    if (fullRestore && extraInLive > 0)
+                        details.Add($"{extraInLive} live items not in shadow (will be removed in Full Restore)");
+
+                    var action = fullRestore
+                        ? "Full Restore: replace live contents with shadow"
+                        : $"Safe: add {missingFromLive.Count} missing items";
+
+                    logger.Info("Scan: '{0}' — {1}. Action: {2}", shadow.PlaylistName, string.Join(", ", details), action);
+
+                    this.Options.RepairPreviewList.Add(new GenericListItem
+                    {
+                        PrimaryText = shadow.PlaylistName,
+                        SecondaryText = $"{string.Join(" | ", details)} → {action}",
+                        Status = ItemStatus.Warning,
+                        Icon = IconNames.warning,
+                        IconMode = ItemListIconMode.SmallRegular
+                    });
+                    totalIssues++;
                 }
 
-                logger.Info("Repair scan complete. {0} broken items across {1} playlists.", totalBroken, shadows.Count);
-                var msg = totalBroken == 0
-                    ? $"Scan complete: no broken links found across {shadows.Count} playlists."
-                    : $"Scan complete: {totalBroken} broken items found. Click Repair All to fix.";
-                SetShadowStatus(msg, totalBroken == 0 ? ItemStatus.Succeeded : ItemStatus.Warning);
+                var msg = totalIssues == 0
+                    ? $"Scan complete: no issues found across {shadows.Count} playlists."
+                    : $"Scan complete: {totalIssues} playlists need attention. Click Repair All to fix.";
+                SetShadowStatus(msg, totalIssues == 0 ? ItemStatus.Succeeded : ItemStatus.Warning);
             }
             catch (Exception ex)
             {
@@ -412,11 +552,14 @@ namespace EmbyPlaylistManager.UI
         private async Task HandleRepairAll()
         {
             SetShadowStatus("Repairing...", ItemStatus.InProgress);
+            this.Options.MissingItemsList.Clear();
+            RaiseUIViewInfoChanged();
 
             try
             {
                 var user = GetUser();
                 var shadows = shadowService.GetAllShadows();
+                var fullRestore = this.Options.FullRestoreMode;
 
                 if (shadows.Count == 0)
                 {
@@ -426,19 +569,46 @@ namespace EmbyPlaylistManager.UI
 
                 int totalFixed = 0, totalMissing = 0;
 
+                var allPlaylists = libraryManager.GetItemList(new InternalItemsQuery(user)
+                {
+                    IncludeItemTypes = new[] { "Playlist" }
+                });
+
                 foreach (var shadow in shadows)
                 {
-                    var livePlaylist = libraryManager.GetItemList(new InternalItemsQuery(user)
-                    {
-                        IncludeItemTypes = new[] { "Playlist" }
-                    }).FirstOrDefault(p => string.Equals(p.Name, shadow.PlaylistName, StringComparison.OrdinalIgnoreCase));
+                    if (shadow.Items.Count == 0) continue;
 
-                    if (livePlaylist == null) continue;
+                    var byGuid = shadow.PlaylistId != Guid.Empty
+                        ? allPlaylists.FirstOrDefault(p => p.Id == shadow.PlaylistId)
+                        : null;
+                    var byName = allPlaylists
+                        .Where(p => string.Equals(p.Name, shadow.PlaylistName, StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+
+                    var livePlaylist = byGuid ?? byName.FirstOrDefault();
+
+                    if (livePlaylist == null)
+                    {
+                        logger.Info("Repair: '{0}' missing — recreating.", shadow.PlaylistName);
+                        var created = await playlistService.CreatePlaylistFromShadow(user, shadow);
+                        if (created == null) { logger.Warn("Repair: Could not recreate '{0}'.", shadow.PlaylistName); continue; }
+                        shadowService.DeleteShadow(shadow.PlaylistName, shadow.PlaylistId);
+                        livePlaylist = created;
+                        totalFixed++;
+                    }
 
                     var liveItems = libraryManager.GetItemList(new InternalItemsQuery(user)
                     {
                         ListIds = new[] { livePlaylist.InternalId }
                     });
+
+                    // Full restore: clear live playlist first
+                    if (fullRestore && liveItems.Length > 0)
+                    {
+                        await playlistService.ClearPlaylist(livePlaylist.InternalId, liveItems);
+                        liveItems = new BaseItem[0];
+                        logger.Info("Repair (Full Restore): cleared '{0}'.", shadow.PlaylistName);
+                    }
 
                     foreach (var shadowItem in shadow.Items)
                     {
@@ -453,8 +623,8 @@ namespace EmbyPlaylistManager.UI
                         string resolvedVia = null;
 
                         foreach (var kvp in shadowItem.ProviderIds.OrderBy(k =>
-                                      k.Key.Equals("Imdb", StringComparison.OrdinalIgnoreCase) ? 0 :
-                                      k.Key.Equals("Tmdb", StringComparison.OrdinalIgnoreCase) ? 1 : 2))
+                            k.Key.Equals("Imdb", StringComparison.OrdinalIgnoreCase) ? 0 :
+                            k.Key.Equals("Tmdb", StringComparison.OrdinalIgnoreCase) ? 1 : 2))
                         {
                             resolved = libraryManager.GetItemList(new InternalItemsQuery(user)
                             {
@@ -469,13 +639,11 @@ namespace EmbyPlaylistManager.UI
                             var seriesKvp = shadowItem.SeriesTmdbId.HasValue
                                 ? new KeyValuePair<string, string>("Tmdb", shadowItem.SeriesTmdbId.Value.ToString())
                                 : new KeyValuePair<string, string>("Tvdb", shadowItem.SeriesTvdbId.Value.ToString());
-
                             var series = libraryManager.GetItemList(new InternalItemsQuery(user)
                             {
                                 IncludeItemTypes = new[] { "Series" },
                                 AnyProviderIdEquals = new[] { seriesKvp }
                             }).FirstOrDefault();
-
                             if (series != null)
                             {
                                 resolved = libraryManager.GetItemList(new InternalItemsQuery(user)
@@ -493,7 +661,7 @@ namespace EmbyPlaylistManager.UI
                         if (resolved != null)
                         {
                             playlistService.AddToPlaylist(livePlaylist.InternalId, resolved, user);
-                            logger.Info("  Fixed: '{0}' — re-resolved via {1}, added to '{2}'", shadowItem.Name, resolvedVia, shadow.PlaylistName);
+                            logger.Info("  Fixed: '{0}' via {1} → '{2}'", shadowItem.Name, resolvedVia, shadow.PlaylistName);
                             totalFixed++;
                         }
                         else
@@ -501,16 +669,24 @@ namespace EmbyPlaylistManager.UI
                             var providerStr = shadowItem.ProviderIds.Count > 0
                                 ? string.Join(", ", shadowItem.ProviderIds.Select(k => $"{k.Key}={k.Value}"))
                                 : "no provider IDs";
-                            logger.Warn("  Missing: '{0}' — not found in library [{1}]", shadowItem.Name, providerStr);
+                            logger.Warn("  Missing: '{0}' [{1}]", shadowItem.Name, providerStr);
+                            this.Options.MissingItemsList.Add(new GenericListItem
+                            {
+                                PrimaryText = shadow.PlaylistName,
+                                SecondaryText = $"{shadowItem.Name} [{providerStr}]",
+                                Status = ItemStatus.Warning,
+                                Icon = IconNames.warning,
+                                IconMode = ItemListIconMode.SmallRegular
+                            });
                             totalMissing++;
                         }
                     }
                 }
 
                 logger.Info("Repair complete. Fixed: {0}, Still missing: {1}.", totalFixed, totalMissing);
-                SetShadowStatus(
-                    $"Repair complete. Fixed: {totalFixed}, Still missing: {totalMissing}.",
-                    totalMissing == 0 ? ItemStatus.Succeeded : ItemStatus.Warning);
+                var msg = $"Repair complete. Fixed: {totalFixed}" +
+                    (totalMissing > 0 ? $", {totalMissing} still missing (see Unresolvable Items below)." : ".");
+                SetShadowStatus(msg, totalMissing == 0 ? ItemStatus.Succeeded : ItemStatus.Warning);
 
                 await HandleScan();
             }

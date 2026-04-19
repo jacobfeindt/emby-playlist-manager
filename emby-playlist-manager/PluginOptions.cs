@@ -37,6 +37,18 @@ namespace EmbyPlaylistManager
 
         public ButtonItem RepairAllButton { get; set; } = new ButtonItem("Repair All") { Icon = IconNames.build, Data1 = "RepairAll" };
 
+        [DisplayName("Full Restore Mode")]
+        [Description("When off (Safe), repair only adds missing items and never removes or replaces. When on (Full Restore), the shadow is treated as authoritative — playlist contents are replaced to match the shadow exactly.")]
+        public bool FullRestoreMode { get; set; } = false;
+
+        public CaptionItem MissingCaption { get; set; } = new CaptionItem("Unresolvable Items");
+
+        [DisplayName("")]
+        [Description("Items that could not be resolved against the library after repair. Use provider IDs to search Radarr/Sonarr.")]
+        public GenericItemList MissingItemsList { get; set; } = new GenericItemList();
+
+        public ButtonItem ExportMissingButton { get; set; } = new ButtonItem("Export Missing Items") { Icon = IconNames.download, Data1 = "ExportMissing" };
+
         public StatusItem ShadowStatus { get; set; } = new StatusItem("Shadow Status", "Shadow system is disabled.", ItemStatus.Unavailable);
 
         public SpacerItem Spacer1 { get; set; } = new SpacerItem();

@@ -302,6 +302,30 @@ On plugin load (in `IServerEntryPoint.Run()`):
 - [x] Scan and Repair All buttons disabled during in-progress operations
 - [x] `OnSaveCommand` reflects `EnableShadow` state in `ShadowStatus`
 
+### Phase 7e — Missing Items Report & Scan Intelligence ✅ Complete
+
+#### Repair Mode
+A global `Full Restore Mode` toggle in the Shadow section of `PluginOptions`:
+- **Off (Safe, default)** — only adds missing items, never removes or replaces existing items
+- **On (Full Restore)** — treats shadow as authoritative: clears live playlist contents and rebuilds from shadow
+
+Per-playlist repair control is intentionally not implemented. The scan gives full visibility into each playlist's state. Playlists that need manual intervention should be handled directly in Emby (delete/recreate), then Repair All will pick them up from the shadow. This keeps the tool powerful without requiring interactive per-row UI controls that GenericEdit doesn't support natively.
+
+#### Enhanced Scan List
+Each scan result row shows the full situation per playlist:
+- GUID match status (exact match, name-only match, GUID mismatch)
+- Shadow item count vs live item count
+- Number of items missing from live playlist
+- In Full Restore mode: number of live items not in shadow (will be removed)
+- Projected action: `→ Safe: add N missing items` or `→ Full Restore: replace live contents with shadow`
+
+#### Missing Items Report
+- [x] `MissingItemsList` — populated after Repair All with items that could not be resolved, persists across saves
+- [x] Grouped by playlist, shows item name + all provider IDs
+- [x] **Export Missing Items** button — writes `{ServerName}-missing-items-{timestamp}.json` to the export folder
+- [x] Export format is `List<PlaylistExportDto>` — compatible with import if items are later found on another server
+- [ ] Missing items report written automatically after scheduled repair task runs
+
 ---
 
 ## Open Questions
