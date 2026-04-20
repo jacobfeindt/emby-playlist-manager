@@ -136,6 +136,17 @@ The PostBuild step automatically copies the DLL to `%AppData%\Emby-Server\progra
 - Toggle **Overwrite Existing Playlists** to control collision behaviour
 - Click **Import Playlists**
 
+### Plugin folder locations
+
+| Platform | Plugins folder |
+|---|---|
+| Windows | `%AppData%\Emby-Server\programdata\plugins\` |
+| Linux | `/var/lib/emby/plugins/` |
+| Docker | Depends on your volume mapping — typically wherever you map `/config`, e.g. `/config/plugins/` |
+| Synology | `/volume1/@appstore/EmbyServer/plugins/` (varies by package) |
+
+> The plugin itself is fully platform-agnostic — all file paths are resolved at runtime from Emby's own path configuration, so shadow files, backup copies, and settings land in the correct location automatically on any platform.
+
 ### Shadow Playlists / Repair
 - Toggle **Enable Shadow Playlists** on and save — shadow files are written immediately for all playlists
 - **Scan for Issues** — shows every playlist (shadowed and unshadowed) with:
