@@ -186,30 +186,7 @@ namespace EmbyPlaylistManager.Storage
 
                 foreach (var item in items)
                 {
-                    var itemDto = new PlaylistItemDto { Name = item.Name };
-
-                    if (item.ProviderIds != null)
-                        foreach (var kvp in item.ProviderIds)
-                            itemDto.ProviderIds[kvp.Key] = kvp.Value;
-
-                    if (item.GetType().Name == "Episode")
-                    {
-                        var seriesProp = item.GetType().GetProperty("SeriesProviderIds");
-                        var seriesIds = seriesProp?.GetValue(item) as IDictionary<string, string>;
-                        if (seriesIds != null)
-                        {
-                            if (seriesIds.TryGetValue("Tmdb", out var sTmdb) && int.TryParse(sTmdb, out var sTmdbId))
-                                itemDto.SeriesTmdbId = sTmdbId;
-                            if (seriesIds.TryGetValue("Tvdb", out var sTvdb) && int.TryParse(sTvdb, out var sTvdbId))
-                                itemDto.SeriesTvdbId = sTvdbId;
-                        }
-                        var seasonProp = item.GetType().GetProperty("ParentIndexNumber");
-                        var indexProp = item.GetType().GetProperty("IndexNumber");
-                        if (seasonProp != null) itemDto.Season = (int?)seasonProp.GetValue(item);
-                        if (indexProp != null) itemDto.Episode = (int?)indexProp.GetValue(item);
-                    }
-
-                    dto.Items.Add(itemDto);
+                    dto.Items.Add(PlaylistItemDto.FromItem(item, user, _libraryManager));
                 }
 
                 var path = ShadowFilePath(playlistItem.Name, playlistItem.Id);

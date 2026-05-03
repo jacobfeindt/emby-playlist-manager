@@ -112,59 +112,7 @@ namespace EmbyPlaylistManager
 
             foreach (var item in playlistItems)
             {
-                var dto = new PlaylistItemDto { Name = item.Name };
-
-                if (item.GetType().Name == "Episode")
-                {
-                    var seriesProp = item.GetType().GetProperty("SeriesProviderIds");
-                    var seriesIds = seriesProp?.GetValue(item) as IDictionary<string, string>;
-                    if (seriesIds != null)
-                    {
-                        if (seriesIds.TryGetValue("Tmdb", out var sTmdb) && int.TryParse(sTmdb, out var sTmdbId))
-                            dto.SeriesTmdbId = sTmdbId;
-                        if (seriesIds.TryGetValue("Tvdb", out var sTvdb) && int.TryParse(sTvdb, out var sTvdbId))
-                            dto.SeriesTvdbId = sTvdbId;
-                    }
-
-                    // Fallback: walk up to the Series item directly
-                    if (dto.SeriesTmdbId == null && dto.SeriesTvdbId == null)
-                    {
-                        var seriesIdProp = item.GetType().GetProperty("SeriesId");
-                        if (seriesIdProp?.GetValue(item) is long seriesInternalId && seriesInternalId > 0)
-                        {
-                            var seriesItem = _libraryManager.GetItemList(new InternalItemsQuery(user)
-                            {
-                                IncludeItemTypes = new[] { "Series" },
-                                Limit = 1
-                            }).FirstOrDefault(s => s.InternalId == seriesInternalId)
-                            ?? _libraryManager.GetItemList(new InternalItemsQuery(user)
-                            {
-                                AncestorIds = new[] { seriesInternalId },
-                                IncludeItemTypes = new[] { "Series" },
-                                Limit = 1
-                            }).FirstOrDefault();
-
-                            if (seriesItem?.ProviderIds != null)
-                            {
-                                if (seriesItem.ProviderIds.TryGetValue("Tmdb", out var st) && int.TryParse(st, out var stId))
-                                    dto.SeriesTmdbId = stId;
-                                if (seriesItem.ProviderIds.TryGetValue("Tvdb", out var sv) && int.TryParse(sv, out var svId))
-                                    dto.SeriesTvdbId = svId;
-                            }
-                        }
-                    }
-
-                    var seasonProp = item.GetType().GetProperty("ParentIndexNumber");
-                    var indexProp = item.GetType().GetProperty("IndexNumber");
-                    if (seasonProp != null) dto.Season = (int?)seasonProp.GetValue(item);
-                    if (indexProp != null) dto.Episode = (int?)indexProp.GetValue(item);
-                }
-
-                if (item.ProviderIds != null)
-                {
-                    foreach (var kvp in item.ProviderIds)
-                        dto.ProviderIds[kvp.Key] = kvp.Value;
-                }
+                var dto = PlaylistItemDto.FromItem(item, user, _libraryManager);
 
                 _logger.Info("  Item '{0}' [{1}]: ProviderIds={2}, SeriesTmdbId={3}, SeriesTvdbId={4}, S{5}E{6}",
                     dto.Name, item.GetType().Name,
