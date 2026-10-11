@@ -33,6 +33,14 @@ An Emby Server plugin for managing playlists — export, import, and automatic r
 - Stale shadow files (from deleted/recreated playlists) cleaned up automatically on startup and on write
 - Enable/disable toggle — off by default, zero performance impact when disabled
 
+### Sort a Playlist
+- Pick one playlist from a dropdown and sort it by **TV order** (series, season, episode; specials last), **air / release date**, **title**, **date added**, or **shuffle**, ascending or descending
+- **Preview first**: shows the first 200 items in the new order, where each one is now, and how many moves it takes. Nothing changes until you click **Apply Sort**
+- Items with no value for the chosen sort (no air date, no season) always go last, and sorting an already-sorted playlist changes nothing
+- Uses the fewest `MoveItem` calls; very large reorders rebuild the playlist instead
+- Safe by design: refuses if the playlist changed since the preview, verifies the real order while it works, saves a backup of the previous order (last 10 per playlist, under `PlaylistManager/sort-backups`), and writes the shadow file once at the end
+- Only one long-running operation (import, repair, scan, sort, scheduled repair) runs at a time
+
 ### General
 - Native Emby plugin UI with folder/file pickers, action buttons, and live status feedback
 - HTTP API endpoints for automation and scripting
@@ -79,12 +87,21 @@ EmbyPlaylistManager/
 ├── EmbyPlaylistManager.csproj
 ├── Plugin.cs                    # Plugin entry point (BasePlugin + IHasUIPages)
 ├── PluginEntryPoint.cs          # IServerEntryPoint — shadow event subscriptions
-├── PluginOptions.cs             # UI options page (export, import, shadow, repair)
+├── PluginOptions.cs             # UI options page (export, import, shadow, repair, sort)
 ├── PlaylistService.cs           # Core export/import logic
+├── PlaylistQueries.cs           # The one place playlists are read (true order + entry ids)
+├── PlaylistSortService.cs       # Sort preview/apply: backup, verify, move or rebuild
+├── OperationGate.cs             # One long-running operation at a time
 ├── PlaylistRepairTask.cs        # IScheduledTask — weekly automated repair
 ├── Models/
 │   ├── PlaylistExportDto.cs     # Top-level export wrapper (one per playlist)
 │   └── PlaylistItemDto.cs       # Portable media item (ProviderIds dictionary)
+├── Sorting/                     # Pure sorting logic, no Emby types (unit-tested)
+│   ├── PlaylistSortMode.cs      # Sort modes and direction
+│   ├── SortEntry.cs             # Plain-data snapshot of a playlist row
+│   ├── NaturalStringComparer.cs # Ordinal natural compare ("Ep 2" before "Ep 10")
+│   ├── PlaylistSorter.cs        # Builds the target order
+│   └── MovePlanner.cs           # Fewest MoveItem calls to reach it
 ├── Services/
 │   ├── ExportPlaylistsRequest.cs
 │   ├── ImportPlaylistsRequest.cs
@@ -97,6 +114,9 @@ EmbyPlaylistManager/
 │   └── PluginPageView.cs        # Button handlers, preview, scan, repair, status
 ├── UIBaseClasses/               # Boilerplate from Emby SDK UI template
 └── ThumbImage.png               # Plugin icon (embedded resource)
+
+tests/
+└── PlaylistSorter.Tests/        # Dependency-free test runner for Sorting/ (dotnet run -c Release)
 ```
 
 ## Build Setup
@@ -135,6 +155,13 @@ The PostBuild step automatically copies the DLL to `%AppData%\Emby-Server\progra
 - Preview shows each playlist, item count, and what will happen (import / rename / overwrite)
 - Toggle **Overwrite Existing Playlists** to control collision behaviour
 - Click **Import Playlists**
+
+**Sort a Playlist**
+- Choose the playlist (same-named playlists are told apart by the short id in brackets), the **Sort by** mode and the **Direction**
+- Click **Preview Sort** — the page lists the first 200 items in the new order and how many items change position
+- Click **Apply Sort** to make the change. Apply only works on a fresh preview; changing the playlist, mode or direction invalidates it
+- A backup of the previous order is saved to `{DataPath}\PlaylistManager\sort-backups\{playlistGuid}-{timestamp}.json` (the 10 most recent per playlist are kept)
+- Sort modes: *TV order* (series name, season, episode; specials after the regular seasons; non-episodes sort by name among the series), *Air / release date* (same-day episodes keep episode order), *Title* (natural order), *Date added*, *Shuffle*
 
 ### Plugin folder locations
 
@@ -261,10 +288,14 @@ Each export file is an array of playlist objects. `ProviderIds` captures all IDs
 - Collision detection is name-based — renaming a playlist before import will allow it through
 - File picker pre-populates with the full saved path including filename — clear the filename portion before browsing to a new file
 - Shadow system requires the plugin to be running to track changes — playlists modified while the plugin is unloaded will be out of sync until the next Repair All or restart
+- Sorting lists playlists visible to the dashboard user. A playlist containing rows that user cannot see is refused rather than risk misplacing items
+- Very large reorders rebuild the playlist (its internal row ids change and Emby queues a metadata refresh for the re-added items) instead of moving items one at a time
+- *Title* sort uses an ordinal natural comparison, so it can differ in edge cases from the order Emby's own UI shows
+- **The sort feature has not yet been run against a live Emby server.** `docs/reference/sort_playlist.md` lists the behaviours to verify first, and the move-versus-rebuild threshold is provisional until then
 
 ## Developer Reference
 
-Four documents in `docs/reference/` should be read together when working on this project:
+Five documents in `docs/reference/` should be read together when working on this project:
 
 | Document | Purpose |
 |---|---|
@@ -272,6 +303,7 @@ Four documents in `docs/reference/` should be read together when working on this
 | `docs/reference/shadow_playlist_system.md` | Architecture and implementation plan for the shadow/repair system (Phases 7a-7d) |
 | `docs/reference/emby-sdk-primary-guide.md` | Confirmed namespaces, assembly map, and interface signatures for all Emby SDK types used |
 | `docs/reference/emby-sdk-supplemental-guide.md` | Patterns, gotchas, and findings specific to this plugin that aren't in the SDK docs |
+| `docs/reference/sort_playlist.md` | Sort feature design, the Emby playlist API facts it relies on, and the live-server verification checklist |
 
 ### Key paths
 

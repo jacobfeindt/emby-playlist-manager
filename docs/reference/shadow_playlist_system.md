@@ -88,6 +88,8 @@ Subscribe in `IServerEntryPoint.Run()` — confirmed correct pattern (see supple
 | `ItemAdded` | `ILibraryManager` | `Emby.Server.Implementations.dll` | Check if new item resolves any missing shadow entries |
 | `ItemUpdated` | `ILibraryManager` | `Emby.Server.Implementations.dll` | Same — but fires very frequently, must debounce/filter |
 
+**Coalescing and suppression.** A single reorder or import can fire one event per item. The handlers therefore do not write a shadow directly. They call `ShadowPlaylistService.RequestUpdate(user, playlist, trigger)`, which restarts a 3 second timer per playlist and writes once when events stop. Writes for one playlist are serialized by a per-playlist lock. An operation that changes a playlist on purpose (currently Sort) calls `Suppress(playlistInternalId)` and disposes the token when done, then calls `UpdateShadow` once itself.
+
 Event args carry a `.Playlist` property (confirmed via XML docs). Additional properties (e.g. which item IDs changed) are undocumented — discover at runtime by logging the args object on first run.
 
 Note: `Plugin.Run()` via constructor is **not** the right pattern — use `IServerEntryPoint.Run()` as a separate class.
@@ -99,8 +101,14 @@ New `ShadowPlaylistService` class. Constructor should receive `IApplicationHost`
 ```csharp
 public class ShadowPlaylistService
 {
-    // Write shadow for a single playlist
+    // Write shadow for a single playlist (serialized per playlist)
     void UpdateShadow(User user, BaseItem playlist)
+
+    // Debounced write used by the event handlers: restartable 3 s timer per playlist
+    void RequestUpdate(User user, BaseItem playlist, string trigger)
+
+    // Skip RequestUpdate writes for this playlist until the returned token is disposed
+    IDisposable Suppress(long playlistInternalId)
 
     // Write shadows for all playlists (called on startup)
     void InitializeAllShadows(User user)
@@ -163,7 +171,7 @@ The shadow system must never impact Emby's normal operation. It is a background 
 
 - All event handlers wrap their entire body in `try/catch` — exceptions are logged as `Error` and swallowed
 - All file I/O (shadow reads/writes) is wrapped in `try/catch` — a corrupt or locked shadow file must not abort the handler
-- Shadow writes are fire-and-forget where possible — use `Task.Run(() => { try { ... } catch { ... } })` to get off the event thread immediately
+- Shadow writes are fire-and-forget and coalesced — handlers call `RequestUpdate`, which schedules the write on a timer thread and gets off the event thread immediately. Shadow items are written in playlist order (`ListItemOrder`), so a Full Restore reproduces the order
 - `InitializeAllShadows` on startup runs on a background thread — never blocks plugin load
 - Repair operations (scan and execute) run on background threads — never block the UI or event thread
 - `ItemUpdated` debounce must not accumulate unbounded work — cap the pending queue and drop excess events
@@ -270,13 +278,22 @@ On plugin load (in `IServerEntryPoint.Run()`):
 - [x] `ShadowPlaylistService.cs` — read/write/delete shadow files, `InitializeAllShadows`
 - [x] Shadow stored at `appPaths.DataPath\PlaylistManager\shadows\{PlaylistName}-{PlaylistId}.json`
 - [x] All event handlers wrapped in `try/catch` — exceptions logged and swallowed, never rethrown
-- [x] Shadow writes via `Task.Run` — off the event thread immediately
+- [x] Shadow writes off the event thread immediately (superseded by the coalesced writer in Phase 7f)
 - [x] `InitializeAllShadows` runs on background thread — never blocks plugin load
 - [x] Shadow folder missing/unwritable — logs single `Error`, disables gracefully
 - [x] Log shadow update per event: playlist name, item count, trigger event name
 - [x] Log `Debug` line on each event firing with playlist name and InternalId (event discovery)
 - [ ] Deploy to live server — verify shadow files created and updated correctly
 - [ ] After first live event: confirm args properties, update supplemental guide, remove debug logging
+
+### Phase 7f — Ordering, coalescing and operation gate ✅ Code complete (not yet verified on a live server)
+- [x] Every playlist read uses `PlaylistQueries.GetOrderedEntries` (`ListItemOrder`), so shadows keep playlist order
+- [x] `ShadowPlaylistService.RequestUpdate` — one restartable 3 s timer per playlist replaces one `Task.Run` per event
+- [x] Per-playlist write lock around `UpdateShadow`
+- [x] `ShadowPlaylistService.Suppress` — an intentional reorder does not trigger a write per move
+- [x] `OperationGate` — import, repair, scan, sort, the scheduled repair task and the HTTP import cannot overlap. The scheduled task skips its run when something else is busy
+- [x] `ClearPlaylist` and import-overwrite pass entry ids to `RemoveFromPlaylist` (they used item InternalIds before)
+- [ ] Live check: sort with shadows on, then run Repair in Full Restore mode and restart the server; the sorted order must hold (item 8 in `sort_playlist.md`)
 
 ### Phase 7b — Repair Logic ✅ Complete
 - [x] `HandleScan` in `PluginPageView` — diffs shadow vs live, populates `RepairPreviewList`

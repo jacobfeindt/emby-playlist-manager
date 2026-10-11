@@ -80,9 +80,10 @@ Events implemented in: `Emby.Server.Implementations.dll`
 
 ```csharp
 Task<PlaylistCreationResult> CreatePlaylist(PlaylistCreationRequest options)
-void AddToPlaylist(long playlistId, long[] itemIds, User user)   // void — do NOT await
-Task RemoveFromPlaylist(long playlistId, long[] entryIds)
-Task MoveItem(long playlistId, long entryId, int newIndex)
+void AddToPlaylist(long playlistId, long[] itemIds, User user)   // void — do NOT await; only appends
+Task RemoveFromPlaylist(long playlistId, long[] entryIds)        // ENTRY ids (BaseItem.ListItemEntryId), not item InternalIds
+Task MoveItem(long playlistId, long entryId, int newIndex)       // ENTRY id; O(n) per call; one PlaylistItemsMoved event per call
+// Entry ids and playlist order: see emby-sdk-supplemental-guide.md and sort_playlist.md
 
 // Events (subscribe in IServerEntryPoint.Run())
 event EventHandler<PlaylistItemsAddedEventArgs>   PlaylistItemsAdded;

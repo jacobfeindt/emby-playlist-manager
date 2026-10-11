@@ -30,9 +30,9 @@ A fully functional Emby Server plugin for managing playlists — export, import,
 ```csharp
 // IPlaylistManager
 Task<PlaylistCreationResult> CreatePlaylist(PlaylistCreationRequest options)
-void AddToPlaylist(long playlistId, long[] itemIds, User user)
-Task RemoveFromPlaylist(long playlistId, long[] entryIds)
-Task MoveItem(long playlistId, long entryId, int newIndex)
+void AddToPlaylist(long playlistId, long[] itemIds, User user)   // appends only
+Task RemoveFromPlaylist(long playlistId, long[] entryIds)        // entry ids (BaseItem.ListItemEntryId), NOT item InternalIds
+Task MoveItem(long playlistId, long entryId, int newIndex)       // entry id; O(n) per call
 
 // PlaylistCreationRequest properties
 string Name
@@ -369,7 +369,7 @@ When library paths change (e.g. Sonarr renames a TV show folder, or media is mov
 
 #### Service additions
 - `PlaylistService.RepairPlaylists(User, List<PlaylistExportDto>)` — for each matched playlist:
-  1. `RemoveFromPlaylist` all existing items
+  1. `RemoveFromPlaylist` all existing items (by **entry id**, see Phase 8 notes)
   2. Re-resolve each item by provider ID
   3. `AddToPlaylist` resolved items
   4. Log per-item and per-playlist summary
@@ -387,9 +387,29 @@ When library paths change (e.g. Sonarr renames a TV show folder, or media is mov
 - [x] Dropdown in `PluginOptions` — persisted with other settings
 - [x] Preview list reflects selected mode — Overwrite shows "will be overwritten" in yellow
 - [x] `ImportPlaylists` accepts `CollisionMode` parameter
-- [x] Overwrite: find existing playlist → `RemoveFromPlaylist` all items → re-add resolved items
+- [x] Overwrite: find existing playlist → `RemoveFromPlaylist` all items (by entry id) → re-add resolved items
 - [ ] `AutoRename` mode — not implemented
 - [ ] HTTP API `collisionMode` query param — not implemented
+
+---
+
+### Phase 8 — Sort a Playlist ✅ Code complete (not yet verified on a live server)
+
+Full design, Emby API facts and the live-server checklist are in [`sort_playlist.md`](sort_playlist.md).
+
+- [x] Pure sorting code in `Sorting/` (no Emby types): `PlaylistSorter` (TV order, release date, title, date added, shuffle; nulls last; ties keep original order), `MovePlanner` (fewest `MoveItem` calls = n − longest increasing subsequence), `NaturalStringComparer`
+- [x] `tests/PlaylistSorter.Tests` — 14 dependency-free tests including a generated 2,769-row playlist (`dotnet run -c Release`)
+- [x] `PlaylistSortService` — `ListPlaylists`, `BuildPlan`, `Apply` (snapshot check, hidden-row check, backup file, shadow suppression, move or rebuild, order verification)
+- [x] UI section: playlist dropdown, Sort by, Direction, Refresh Playlists, Preview Sort, Apply Sort, preview list, status
+- [x] Prerequisite fixes: entry ids for `RemoveFromPlaylist`, explicit `ListItemOrder` on every playlist read, coalesced shadow writes, `OperationGate`
+- [ ] Live-server verification (10 items in `sort_playlist.md`), then set `PlaylistSortService.MaxMoveOps` from the measured time per move
+- [ ] Phase 8b: persistent per-playlist sort rules (outline in `sort_playlist.md`)
+- [ ] Undo button (the backup file already records the previous order)
+
+#### Notes
+- `RemoveFromPlaylist` and `MoveItem` take **entry ids**, the playlist row ids. Earlier code passed item InternalIds to `RemoveFromPlaylist`; `ClearPlaylist` and the import-overwrite path now pass entry ids and throw if any id is 0.
+- A `ListIds` query has no guaranteed order. Always read with `OrderBy ListItemOrder` (`PlaylistQueries`).
+- `AutoPostBack` calls `RunCommand`, not `OnSaveCommand`.
 
 ---
 
