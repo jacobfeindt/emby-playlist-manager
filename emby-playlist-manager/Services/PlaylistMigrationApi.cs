@@ -71,7 +71,14 @@ namespace EmbyPlaylistManager.Services
             var skipped = request.Playlists.Count - toImport.Count;
 
             if (toImport.Count > 0)
-                await plugin.PlaylistService.ImportPlaylists(user, toImport);
+            {
+                if (!plugin.Gate.TryBegin("API import", out var gateToken))
+                    throw new InvalidOperationException($"Another playlist operation ({plugin.Gate.Current}) is running. Try again when it has finished.");
+                using (gateToken)
+                {
+                    await plugin.PlaylistService.ImportPlaylists(user, toImport);
+                }
+            }
 
             return new ImportPlaylistsResponse
             {

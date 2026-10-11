@@ -54,6 +54,20 @@ namespace EmbyPlaylistManager
                 return;
             }
 
+            if (!plugin.Gate.TryBegin("Scheduled repair", out var gateToken))
+            {
+                _logger.Info("PlaylistRepairTask: Another playlist operation ({0}) is running. Skipping this run.", plugin.Gate.Current);
+                return;
+            }
+
+            using (gateToken)
+            {
+                await ExecuteCore(plugin, cancellationToken, progress);
+            }
+        }
+
+        private async Task ExecuteCore(Plugin plugin, CancellationToken cancellationToken, IProgress<double> progress)
+        {
             var options = plugin.OptionsStore.GetOptions();
             if (!options.EnableShadow)
             {
@@ -104,10 +118,7 @@ namespace EmbyPlaylistManager
                             continue;
                         }
 
-                        var liveItems = _libraryManager.GetItemList(new InternalItemsQuery(user)
-                        {
-                            ListIds = new[] { livePlaylist.InternalId }
-                        });
+                        var liveItems = plugin.PlaylistService.GetPlaylistEntries(user, livePlaylist.InternalId);
 
                         _logger.Info("PlaylistRepairTask: Playlist '{0}': {1} live items, {2} shadow items. FullRestore={3}",
                             shadow.PlaylistName, liveItems.Length, shadow.Items.Count, options.FullRestoreMode);

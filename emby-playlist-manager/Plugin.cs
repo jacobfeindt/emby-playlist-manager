@@ -28,9 +28,15 @@ namespace EmbyPlaylistManager
         private readonly ShadowPlaylistService _shadowService;
         private List<IPluginUIPageController> _pages;
 
+        private readonly PlaylistSortService _sortService;
+
         public OptionsStore OptionsStore => _optionsStore;
         public PlaylistService PlaylistService => _playlistService;
         public ShadowPlaylistService ShadowService => _shadowService;
+        public PlaylistSortService SortService => _sortService;
+
+        /// <summary>Only one long-running playlist operation (import, repair, scan, sort, scheduled repair) runs at a time.</summary>
+        public OperationGate Gate { get; } = new OperationGate();
 
         public Plugin(
             IServerApplicationHost appHost,
@@ -46,6 +52,7 @@ namespace EmbyPlaylistManager
             _playlistService = new PlaylistService(libraryManager, playlistManager, _logger);
             var appPaths = appHost.Resolve<IApplicationPaths>();
             _shadowService = new ShadowPlaylistService(libraryManager, appPaths, _logger);
+            _sortService = new PlaylistSortService(libraryManager, playlistManager, _shadowService, appPaths, _logger);
             _logger.Info("Playlist Manager plugin loaded.");
         }
 

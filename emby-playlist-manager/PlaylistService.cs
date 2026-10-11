@@ -31,10 +31,20 @@ namespace EmbyPlaylistManager
             _playlistManager.AddToPlaylist(playlistInternalId, new[] { item.InternalId }, user);
         }
 
+        /// <summary>Playlist contents in playlist order, each row carrying its entry id (see <see cref="PlaylistQueries"/>).</summary>
+        public BaseItem[] GetPlaylistEntries(User user, long playlistInternalId, bool strict = false)
+        {
+            return PlaylistQueries.GetOrderedEntries(_libraryManager, user, playlistInternalId, _logger, strict);
+        }
+
+        /// <summary>
+        /// Removes the given rows from the playlist. <paramref name="items"/> must be rows read from the playlist itself
+        /// (via <see cref="GetPlaylistEntries"/>): Emby removes by playlist-entry id, not by library item id.
+        /// </summary>
         public async Task ClearPlaylist(long playlistInternalId, BaseItem[] items)
         {
             if (items.Length == 0) return;
-            await _playlistManager.RemoveFromPlaylist(playlistInternalId, items.Select(i => i.InternalId).ToArray());
+            await _playlistManager.RemoveFromPlaylist(playlistInternalId, PlaylistQueries.GetEntryIds(items));
         }
 
         public async Task<BaseItem> CreatePlaylistFromShadow(User user, PlaylistExportDto shadow)
@@ -105,10 +115,7 @@ namespace EmbyPlaylistManager
                 PlaylistId = playlistItem.Id
             };
 
-            var playlistItems = _libraryManager.GetItemList(new InternalItemsQuery(user)
-            {
-                ListIds = new[] { playlistItem.InternalId }
-            });
+            var playlistItems = GetPlaylistEntries(user, playlistItem.InternalId);
 
             foreach (var item in playlistItems)
             {
@@ -169,14 +176,10 @@ namespace EmbyPlaylistManager
             if (existing != null && overwrite)
             {
                 _logger.Info("Overwriting existing playlist '{0}'.", playlist.PlaylistName);
-                var existingItems = _libraryManager.GetItemList(new InternalItemsQuery(user)
-                {
-                    ListIds = new[] { existing.InternalId }
-                });
+                var existingItems = GetPlaylistEntries(user, existing.InternalId);
                 if (existingItems.Length > 0)
                 {
-                    var entryIds = existingItems.Select(i => i.InternalId).ToArray();
-                    await _playlistManager.RemoveFromPlaylist(existing.InternalId, entryIds);
+                    await ClearPlaylist(existing.InternalId, existingItems);
                 }
                 playlistInternalId = existing.InternalId;
             }

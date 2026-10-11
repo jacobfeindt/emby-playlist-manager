@@ -171,7 +171,7 @@ namespace EmbyPlaylistManager
                 {
                     var user = GetAdminUser();
                     if (user != null)
-                        _plugin.ShadowService.UpdateShadow(user, playlist, triggerEvent);
+                        _plugin.ShadowService.RequestUpdate(user, playlist, triggerEvent);
                 }
                 catch (Exception ex)
                 {
