@@ -57,6 +57,21 @@ Use a throwaway playlist and note the results in this file.
 | 9 | Non-admin user and hidden items | Sort a playlist containing items one user cannot see. Expect the refusal message. | Revisit the hidden-row check. |
 | 10 | Is `[Browsable(false)]` `SortPlaylistChoices` kept out of the saved options JSON? | Inspect `Playlist Manager.json` in the plugin configuration folder after a Save. | Mark it `[JsonIgnore]` or keep clearing it before save. |
 
+## Live test results
+
+First live run, 2026-10-11, Emby 4.9.3 (one 4-item playlist; from the plugin's own log lines):
+
+| Checklist item | Result |
+|---|---|
+| 1. Entry ids returned by a `ListIds` query | Passed. `GetEntryIds` throws on an id of 0 and did not. |
+| 2. Ordered query accepted | Passed. 4 rows read in 2 ms, 2 moves planned. |
+| 7. Dropdown fills | Passed. 5 playlists listed. Selecting a different one did **not** reach the plugin (no `SortChanged` command was ever logged). Still open. |
+| Apply | Not tested. Apply stayed disabled because the page kept showing "Reading the playlist..." although the log shows the preview finished in 13 ms. |
+
+Defects found by this run:
+- `appHost.Resolve<Plugin>()` creates a new `Plugin` per call, so the operation gate, shadow debounce timers and suppression counts were not shared. They are now `static`, and the page resolves the plugin once.
+- The preview completed before the page was listening for the update. It now runs inside the command, and background operations wait 300 ms before their first status update.
+
 ## Phase C (not built): persistent sort rules
 
 Store a rule per playlist (GUID, mode, direction) in `PluginOptions`. Re-apply it after `PlaylistItemsAdded` and `PlaylistItemsMoved` and after imports, using the existing coalescing and `OperationGate`, with an "in progress" flag so the plugin's own moves never retrigger it. Decide how it interacts with Safe-mode repair (which appends at the end) and Full Restore (which uses shadow order) before building.

@@ -116,18 +116,21 @@ namespace EmbyPlaylistManager
                 .Select(p => new EditorSelectOption
                 {
                     Value = p.Id.ToString("N"),
-                    Name = $"{p.Name} [{p.Id.ToString("N").Substring(0, 8)}]"
+                    Name = $"{p.Name} [{p.Id.ToString("N").Substring(0, 8)}]",
+                    IsEnabled = true   // EditorSelectOption.IsEnabled defaults to false, which renders the option disabled
                 })
                 .ToList();
         }
 
         public SortPlan BuildPlan(User user, Guid playlistId, PlaylistSortMode mode, SortDirection direction)
         {
+            var timer = System.Diagnostics.Stopwatch.StartNew();
             var playlist = _libraryManager.GetItemById(playlistId);
             if (playlist == null) throw new InvalidOperationException("That playlist no longer exists. Refresh the list.");
 
             var rows = PlaylistQueries.GetOrderedEntries(_libraryManager, user, playlist.InternalId, _logger, strict: true);
             var entryIds = PlaylistQueries.GetEntryIds(rows).ToList();
+            _logger.Info("Sort: read {0} rows of '{1}' in {2} ms.", rows.Length, playlist.Name, timer.ElapsedMilliseconds);
 
             var seriesNames = new Dictionary<long, string>();
             var entries = rows.Select((item, i) => ToSortEntry(item, i, seriesNames)).ToList();
@@ -136,6 +139,7 @@ namespace EmbyPlaylistManager
             var target = PlaylistSorter.BuildTarget(entries, mode, direction, seed);
             var targetIds = target.Select(t => t.EntryId).ToList();
             var moves = MovePlanner.Plan(entryIds, targetIds);
+            _logger.Info("Sort: planned {0} moves for '{1}' ({2}, {3}) in {4} ms in total.", moves.Count, playlist.Name, mode, direction, timer.ElapsedMilliseconds);
 
             return new SortPlan
             {
@@ -172,6 +176,8 @@ namespace EmbyPlaylistManager
             {
                 var playlist = _libraryManager.GetItemById(plan.PlaylistId);
                 if (playlist == null) return Fail(result, "The playlist no longer exists.");
+                _logger.Info("Sort: applying to '{0}': {1} positions change, {2} planned moves{3}.",
+                    plan.PlaylistName, plan.ChangedPositions, plan.Moves.Count, plan.UseRebuild ? " (rebuild)" : string.Empty);
 
                 if (plan.ChangedPositions == 0)
                 {

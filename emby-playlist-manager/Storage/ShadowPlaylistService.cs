@@ -186,9 +186,11 @@ namespace EmbyPlaylistManager.Storage
             public string Trigger;
         }
 
-        private readonly ConcurrentDictionary<Guid, PendingUpdate> _pending = new ConcurrentDictionary<Guid, PendingUpdate>();
-        private readonly ConcurrentDictionary<Guid, object> _writeLocks = new ConcurrentDictionary<Guid, object>();
-        private readonly ConcurrentDictionary<long, int> _suppressed = new ConcurrentDictionary<long, int>();
+        // Static on purpose: Emby builds several Plugin (and so ShadowPlaylistService) instances, and the event handlers, the page
+        // and the scheduled task must all see the same timers, write locks and suppression counts.
+        private static readonly ConcurrentDictionary<Guid, PendingUpdate> _pending = new ConcurrentDictionary<Guid, PendingUpdate>();
+        private static readonly ConcurrentDictionary<Guid, object> _writeLocks = new ConcurrentDictionary<Guid, object>();
+        private static readonly ConcurrentDictionary<long, int> _suppressed = new ConcurrentDictionary<long, int>();
 
         private object GetWriteLock(Guid playlistId)
         {
@@ -253,26 +255,24 @@ namespace EmbyPlaylistManager.Storage
         public IDisposable Suppress(long playlistInternalId)
         {
             _suppressed.AddOrUpdate(playlistInternalId, 1, (k, v) => v + 1);
-            return new SuppressToken(this, playlistInternalId);
+            return new SuppressToken(playlistInternalId);
         }
 
         private sealed class SuppressToken : IDisposable
         {
-            private readonly ShadowPlaylistService _owner;
             private readonly long _id;
             private int _disposed;
 
-            public SuppressToken(ShadowPlaylistService owner, long id)
+            public SuppressToken(long id)
             {
-                _owner = owner;
                 _id = id;
             }
 
             public void Dispose()
             {
                 if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
-                int remaining = _owner._suppressed.AddOrUpdate(_id, 0, (k, v) => Math.Max(0, v - 1));
-                if (remaining == 0) _owner._suppressed.TryRemove(_id, out _);
+                int remaining = _suppressed.AddOrUpdate(_id, 0, (k, v) => Math.Max(0, v - 1));
+                if (remaining == 0) _suppressed.TryRemove(_id, out _);
             }
         }
 

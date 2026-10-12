@@ -52,19 +52,33 @@ namespace EmbyPlaylistManager.UI
 
         private PluginOptions Options => this.ContentData as PluginOptions;
 
-        private Plugin Plugin => appHost.Resolve<Plugin>();
+        // Resolve<Plugin>() builds a brand-new Plugin on every call, so resolve it once per page view.
+        private Plugin pluginInstance;
+
+        private Plugin Plugin => pluginInstance ?? (pluginInstance = appHost.Resolve<Plugin>());
 
         // The plan produced by the last "Preview Sort". Kept here, not in the options, so it is never persisted.
         private SortPlan sortPlan;
 
         public override bool IsCommandAllowed(string commandKey)
         {
-            if (commandKey == "Preview") return true;
-            return base.IsCommandAllowed(commandKey);
+            bool allowed = commandKey == "Preview" || base.IsCommandAllowed(commandKey);
+            if (IsSortCommand(commandKey))
+                logger.Info("Sort: page {0} command '{1}'.", allowed ? "allowed" : "REFUSED", commandKey);
+            return allowed;
+        }
+
+        private static bool IsSortCommand(string key)
+        {
+            return key != null && key.StartsWith("Sort", StringComparison.Ordinal);
         }
 
         public override Task<IPluginUIView> RunCommand(string itemId, string commandId, string data)
         {
+            if (IsSortCommand(commandId))
+                logger.Info("Sort: command '{0}' received (playlist {1}, sort {2}, direction {3}).",
+                    commandId, this.Options?.SortPlaylistId ?? "none", this.Options?.SortMode, this.Options?.SortDirectionChoice);
+
             switch (commandId)
             {
                 case "Export":
@@ -116,7 +130,7 @@ namespace EmbyPlaylistManager.UI
                 case "SortChanged":
                     // Any change to the playlist, sort or direction makes the old preview invalid.
                     this.sortPlan = null;
-                    this.Options.SortPreviewList = new GenericItemList();
+                    this.Options.SortPreviewList.Clear();
                     SetSortStatus("Click Preview Sort to see the new order.", ItemStatus.Unavailable);
                     return Task.FromResult<IPluginUIView>(this);
                 case "SortPreview":
@@ -125,7 +139,7 @@ namespace EmbyPlaylistManager.UI
                         SetSortStatus("Choose a playlist first.", ItemStatus.Warning);
                         return Task.FromResult<IPluginUIView>(this);
                     }
-                    return RunGated("Sort preview", HandleSortPreview, SetSortStatus);
+                    return RunGatedInline("Sort preview", HandleSortPreview, SetSortStatus);
                 case "SortApply":
                     if (this.sortPlan == null)
                     {
@@ -156,7 +170,7 @@ namespace EmbyPlaylistManager.UI
             this.Options.ShadowStatus.StatusText = this.Options.EnableShadow ? "Shadow system enabled." : "Shadow system is disabled.";
             this.Options.ShadowStatus.Status = this.Options.EnableShadow ? ItemStatus.Succeeded : ItemStatus.Unavailable;
             this.sortPlan = null;
-            this.Options.SortPreviewList = new GenericItemList();
+            this.Options.SortPreviewList.Clear();
             this.Options.SortStatus.StatusText = "Choose a playlist and a sort, then click Preview Sort.";
             this.Options.SortStatus.Status = ItemStatus.Unavailable;
             this.Options.SortApplyButton.IsEnabled = false;
@@ -170,21 +184,62 @@ namespace EmbyPlaylistManager.UI
         /// Runs a long operation on a background task, but only if no other playlist operation is running.
         /// The gate is taken here, synchronously, so two button clicks can never both start.
         /// </summary>
-        private Task<IPluginUIView> RunGated(string operationName, Func<Task> work, Action<string, ItemStatus> reportStatus)
+        /// <summary>Takes the shared operation gate, or tells the user another operation is running.</summary>
+        private bool TryEnterGate(string operationName, Action<string, ItemStatus> reportStatus, out IDisposable token)
         {
             var plugin = this.Plugin;
-            if (plugin == null || !plugin.Gate.TryBegin(operationName, out var token))
+            if (plugin != null && plugin.Gate.TryBegin(operationName, out token))
             {
-                reportStatus($"Another operation ({plugin?.Gate.Current ?? "unknown"}) is still running. Try again when it has finished.", ItemStatus.Warning);
-                return Task.FromResult<IPluginUIView>(this);
+                logger.Info("{0}: started.", operationName);
+                return true;
             }
+
+            token = null;
+            var running = plugin?.Gate.Current ?? "unknown";
+            logger.Warn("{0}: not started, another operation ({1}) is running.", operationName, running);
+            reportStatus($"Another operation ({running}) is still running. Try again when it has finished.", ItemStatus.Warning);
+            return false;
+        }
+
+        private Task<IPluginUIView> RunGated(string operationName, Func<Task> work, Action<string, ItemStatus> reportStatus)
+        {
+            if (!TryEnterGate(operationName, reportStatus, out var token))
+                return Task.FromResult<IPluginUIView>(this);
 
             Task.Run(async () =>
             {
-                try { await work(); }
-                finally { token.Dispose(); }
+                var timer = System.Diagnostics.Stopwatch.StartNew();
+                try
+                {
+                    // Let the page receive this command's response before the first status update is raised.
+                    await Task.Delay(300);
+                    await work();
+                }
+                catch (Exception ex) { logger.ErrorException("{0}: unhandled error", ex, operationName); }
+                finally
+                {
+                    token.Dispose();
+                    logger.Info("{0}: finished in {1} ms.", operationName, timer.ElapsedMilliseconds);
+                }
             });
             return Task.FromResult<IPluginUIView>(this);
+        }
+
+        /// <summary>For quick operations: the work runs inside the command, so the command's response already carries the result.</summary>
+        private async Task<IPluginUIView> RunGatedInline(string operationName, Func<Task> work, Action<string, ItemStatus> reportStatus)
+        {
+            if (!TryEnterGate(operationName, reportStatus, out var token))
+                return this;
+
+            var timer = System.Diagnostics.Stopwatch.StartNew();
+            try { await work(); }
+            catch (Exception ex) { logger.ErrorException("{0}: unhandled error", ex, operationName); }
+            finally
+            {
+                token.Dispose();
+                logger.Info("{0}: finished in {1} ms.", operationName, timer.ElapsedMilliseconds);
+            }
+            return this;
         }
 
         private void HandlePreview()
@@ -440,6 +495,7 @@ namespace EmbyPlaylistManager.UI
                     choices.Any(c => string.Equals(Convert.ToString(c.Value), selected, StringComparison.OrdinalIgnoreCase));
                 if (!stillThere)
                     this.Options.SortPlaylistId = choices.Count > 0 ? Convert.ToString(choices[0].Value) : null;
+                logger.Info("Sort: {0} playlists listed for the dropdown; selected: {1}.", choices.Count, this.Options.SortPlaylistId ?? "none");
                 RaiseUIViewInfoChanged();
             }
             catch (Exception ex)
@@ -452,6 +508,9 @@ namespace EmbyPlaylistManager.UI
         {
             SetSortStatus("Reading the playlist...", ItemStatus.InProgress);
             this.sortPlan = null;
+            var previewTimer = System.Diagnostics.Stopwatch.StartNew();
+            logger.Info("Sort preview: started for playlist {0} (sort {1}, direction {2}).",
+                this.Options.SortPlaylistId ?? "none", this.Options.SortMode, this.Options.SortDirectionChoice);
             try
             {
                 Guid playlistId;
@@ -463,23 +522,30 @@ namespace EmbyPlaylistManager.UI
 
                 var sorter = this.Plugin.SortService;
                 var plan = sorter.BuildPlan(GetUser(), playlistId, this.Options.SortMode, this.Options.SortDirectionChoice);
+                logger.Info("Sort preview: '{0}' has {1} items, {2} change position, {3} planned moves{4}. Plan built in {5} ms.",
+                    plan.PlaylistName, plan.SnapshotEntryIds.Count, plan.ChangedPositions, plan.Moves.Count, plan.UseRebuild ? " (rebuild)" : string.Empty, previewTimer.ElapsedMilliseconds);
 
-                var list = new GenericItemList();
+                // Fill the existing list in place and use the same row shape as the other lists on this page (status, icon, icon mode).
+                var list = this.Options.SortPreviewList;
+                list.Clear();
                 foreach (var row in sorter.BuildPreviewRows(plan))
                 {
+                    bool moved = row.OldPosition != row.NewPosition;
                     list.Add(new GenericListItem
                     {
                         PrimaryText = $"{row.NewPosition}. {row.Text}",
-                        SecondaryText = row.OldPosition == row.NewPosition ? "stays in place" : $"now at position {row.OldPosition}",
-                        Status = ItemStatus.None,
-                        IconMode = ItemListIconMode.NoIcons
+                        SecondaryText = moved ? $"now at position {row.OldPosition}" : "stays in place",
+                        Status = ItemStatus.Succeeded,
+                        Icon = moved ? IconNames.info : IconNames.check_circle,
+                        IconMode = ItemListIconMode.SmallRegular
                     });
                 }
-                this.Options.SortPreviewList = list;
                 this.sortPlan = plan;
 
                 var text = plan.DescribeEffect() + (plan.Target.Count > list.Count ? $" Showing the first {list.Count}." : string.Empty);
+                logger.Info("Sort preview: showing {0} rows; updating the page.", list.Count);
                 SetSortStatus(text, plan.ChangedPositions == 0 ? ItemStatus.Succeeded : ItemStatus.Warning);
+                logger.Info("Sort preview: page updated after {0} ms.", previewTimer.ElapsedMilliseconds);
             }
             catch (Exception ex)
             {
@@ -511,7 +577,7 @@ namespace EmbyPlaylistManager.UI
 
                 // A plan is single-use: the playlist has changed (or the attempt failed), so the preview is out of date either way.
                 this.sortPlan = null;
-                this.Options.SortPreviewList = new GenericItemList();
+                this.Options.SortPreviewList.Clear();
                 SetSortStatus(result.Message, result.Success ? ItemStatus.Succeeded : ItemStatus.Failed);
             }
             catch (Exception ex)

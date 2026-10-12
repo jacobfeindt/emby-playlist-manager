@@ -35,8 +35,12 @@ namespace EmbyPlaylistManager
         public ShadowPlaylistService ShadowService => _shadowService;
         public PlaylistSortService SortService => _sortService;
 
-        /// <summary>Only one long-running playlist operation (import, repair, scan, sort, scheduled repair) runs at a time.</summary>
-        public OperationGate Gate { get; } = new OperationGate();
+        // Emby's IApplicationHost.Resolve<Plugin>() builds a NEW Plugin on every call, so anything that must be shared between
+        // the page, the scheduled task, the HTTP API and the event handlers has to live in a static, not in an instance field.
+        private static readonly OperationGate SharedGate = new OperationGate();
+
+        /// <summary>Only one long-running playlist operation (import, repair, scan, sort, scheduled repair) runs at a time, across every Plugin instance.</summary>
+        public OperationGate Gate => SharedGate;
 
         public Plugin(
             IServerApplicationHost appHost,
@@ -53,7 +57,7 @@ namespace EmbyPlaylistManager
             var appPaths = appHost.Resolve<IApplicationPaths>();
             _shadowService = new ShadowPlaylistService(libraryManager, appPaths, _logger);
             _sortService = new PlaylistSortService(libraryManager, playlistManager, _shadowService, appPaths, _logger);
-            _logger.Info("Playlist Manager plugin loaded.");
+            _logger.Info("Playlist Manager plugin loaded (DLL built {0:yyyy-MM-dd HH:mm:ss} UTC).", File.GetLastWriteTimeUtc(typeof(Plugin).Assembly.Location));
         }
 
         public override string Name => PluginName;
