@@ -54,6 +54,20 @@ namespace EmbyPlaylistManager
                 return;
             }
 
+            if (!plugin.Gate.TryBegin("Scheduled repair", out var gateToken))
+            {
+                _logger.Info("PlaylistRepairTask: Another playlist operation ({0}) is running. Skipping this run.", plugin.Gate.Current);
+                return;
+            }
+
+            using (gateToken)
+            {
+                await ExecuteCore(plugin, cancellationToken, progress);
+            }
+        }
+
+        private async Task ExecuteCore(Plugin plugin, CancellationToken cancellationToken, IProgress<double> progress)
+        {
             var options = plugin.OptionsStore.GetOptions();
             if (!options.EnableShadow)
             {
@@ -104,19 +118,23 @@ namespace EmbyPlaylistManager
                             continue;
                         }
 
-                        var liveItems = _libraryManager.GetItemList(new InternalItemsQuery(user)
-                        {
-                            ListIds = new[] { livePlaylist.InternalId }
-                        });
+                        var liveItems = plugin.PlaylistService.GetPlaylistEntries(user, livePlaylist.InternalId);
 
-                        _logger.Info("PlaylistRepairTask: Playlist '{0}': {1} live items, {2} shadow items.",
-                            shadow.PlaylistName, liveItems.Length, shadow.Items.Count);
+                        _logger.Info("PlaylistRepairTask: Playlist '{0}': {1} live items, {2} shadow items. FullRestore={3}",
+                            shadow.PlaylistName, liveItems.Length, shadow.Items.Count, options.FullRestoreMode);
+
+                        if (options.FullRestoreMode)
+                        {
+                            await plugin.PlaylistService.ClearPlaylist(livePlaylist.InternalId, liveItems);
+                            liveItems = new BaseItem[0];
+                            _logger.Info("PlaylistRepairTask: Cleared '{0}' for full restore.", shadow.PlaylistName);
+                        }
 
                         foreach (var shadowItem in shadow.Items)
                         {
                             cancellationToken.ThrowIfCancellationRequested();
 
-                            var present = liveItems.Any(live =>
+                            var present = !options.FullRestoreMode && liveItems.Any(live =>
                                 shadowItem.ProviderIds.Any(kvp =>
                                     live.ProviderIds != null &&
                                     live.ProviderIds.TryGetValue(kvp.Key, out var val) && val == kvp.Value));

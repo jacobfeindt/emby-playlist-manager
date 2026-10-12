@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
+using Emby.Web.GenericEdit.Common;
 using Emby.Web.GenericEdit.Elements;
 using Emby.Web.GenericEdit.Elements.List;
 using EmbyPlaylistManager.Models;
@@ -46,18 +47,38 @@ namespace EmbyPlaylistManager.UI
             this.shadowService = shadowService;
             this.logger = logger;
             this.ContentData = store.GetOptions();
+            RefreshSortChoices();
         }
 
         private PluginOptions Options => this.ContentData as PluginOptions;
 
+        // Resolve<Plugin>() builds a brand-new Plugin on every call, so resolve it once per page view.
+        private Plugin pluginInstance;
+
+        private Plugin Plugin => pluginInstance ?? (pluginInstance = appHost.Resolve<Plugin>());
+
+        // The plan produced by the last "Preview Sort". Kept here, not in the options, so it is never persisted.
+        private SortPlan sortPlan;
+
         public override bool IsCommandAllowed(string commandKey)
         {
-            if (commandKey == "Preview") return true;
-            return base.IsCommandAllowed(commandKey);
+            bool allowed = commandKey == "Preview" || base.IsCommandAllowed(commandKey);
+            if (IsSortCommand(commandKey))
+                logger.Info("Sort: page {0} command '{1}'.", allowed ? "allowed" : "REFUSED", commandKey);
+            return allowed;
+        }
+
+        private static bool IsSortCommand(string key)
+        {
+            return key != null && key.StartsWith("Sort", StringComparison.Ordinal);
         }
 
         public override Task<IPluginUIView> RunCommand(string itemId, string commandId, string data)
         {
+            if (IsSortCommand(commandId))
+                logger.Info("Sort: command '{0}' received (playlist {1}, sort {2}, direction {3}).",
+                    commandId, this.Options?.SortPlaylistId ?? "none", this.Options?.SortMode, this.Options?.SortDirectionChoice);
+
             switch (commandId)
             {
                 case "Export":
@@ -84,8 +105,7 @@ namespace EmbyPlaylistManager.UI
                         SetStatus("Import failed: File path is required.", ItemStatus.Failed);
                         return Task.FromResult<IPluginUIView>(this);
                     }
-                    Task.Run(HandleImport);
-                    return Task.FromResult<IPluginUIView>(this);
+                    return RunGated("Import", HandleImport, SetStatus);
                 case "Preview":
                     HandlePreview();
                     return Task.FromResult<IPluginUIView>(this);
@@ -95,16 +115,38 @@ namespace EmbyPlaylistManager.UI
                         SetShadowStatus("Shadow system is disabled. Enable it first.", ItemStatus.Warning);
                         return Task.FromResult<IPluginUIView>(this);
                     }
-                    Task.Run(HandleScan);
-                    return Task.FromResult<IPluginUIView>(this);
+                    return RunGated("Scan", HandleScan, SetShadowStatus);
                 case "RepairAll":
                     if (!this.Options.EnableShadow)
                     {
                         SetShadowStatus("Shadow system is disabled. Enable it first.", ItemStatus.Warning);
                         return Task.FromResult<IPluginUIView>(this);
                     }
-                    Task.Run(HandleRepairAll);
+                    return RunGated("Repair", HandleRepairAll, SetShadowStatus);
+                case "SortRefresh":
+                    RefreshSortChoices();
+                    SetSortStatus("Playlist list refreshed.", ItemStatus.Unavailable);
                     return Task.FromResult<IPluginUIView>(this);
+                case "SortChanged":
+                    // Any change to the playlist, sort or direction makes the old preview invalid.
+                    this.sortPlan = null;
+                    this.Options.SortPreviewList.Clear();
+                    SetSortStatus("Click Preview Sort to see the new order.", ItemStatus.Unavailable);
+                    return Task.FromResult<IPluginUIView>(this);
+                case "SortPreview":
+                    if (!Guid.TryParse(this.Options.SortPlaylistId, out _))
+                    {
+                        SetSortStatus("Choose a playlist first.", ItemStatus.Warning);
+                        return Task.FromResult<IPluginUIView>(this);
+                    }
+                    return RunGatedInline("Sort preview", HandleSortPreview, SetSortStatus);
+                case "SortApply":
+                    if (this.sortPlan == null)
+                    {
+                        SetSortStatus("Click Preview Sort first. Apply only works on a fresh preview.", ItemStatus.Warning);
+                        return Task.FromResult<IPluginUIView>(this);
+                    }
+                    return RunGated("Sort", HandleSortApply, SetSortStatus);
                 case "ExportMissing":
                     if (this.Options.MissingItemsList.Count == 0)
                     {
@@ -127,8 +169,77 @@ namespace EmbyPlaylistManager.UI
             this.Options.MissingItemsList.Clear();
             this.Options.ShadowStatus.StatusText = this.Options.EnableShadow ? "Shadow system enabled." : "Shadow system is disabled.";
             this.Options.ShadowStatus.Status = this.Options.EnableShadow ? ItemStatus.Succeeded : ItemStatus.Unavailable;
+            this.sortPlan = null;
+            this.Options.SortPreviewList.Clear();
+            this.Options.SortStatus.StatusText = "Choose a playlist and a sort, then click Preview Sort.";
+            this.Options.SortStatus.Status = ItemStatus.Unavailable;
+            this.Options.SortApplyButton.IsEnabled = false;
+            this.Options.SortPlaylistChoices = new List<EditorSelectOption>();   // runtime-only dropdown source, never persisted
             store.SetOptions(this.Options);
+            RefreshSortChoices();
             return base.OnSaveCommand(itemId, commandId, data);
+        }
+
+        /// <summary>
+        /// Runs a long operation on a background task, but only if no other playlist operation is running.
+        /// The gate is taken here, synchronously, so two button clicks can never both start.
+        /// </summary>
+        /// <summary>Takes the shared operation gate, or tells the user another operation is running.</summary>
+        private bool TryEnterGate(string operationName, Action<string, ItemStatus> reportStatus, out IDisposable token)
+        {
+            var plugin = this.Plugin;
+            if (plugin != null && plugin.Gate.TryBegin(operationName, out token))
+            {
+                logger.Info("{0}: started.", operationName);
+                return true;
+            }
+
+            token = null;
+            var running = plugin?.Gate.Current ?? "unknown";
+            logger.Warn("{0}: not started, another operation ({1}) is running.", operationName, running);
+            reportStatus($"Another operation ({running}) is still running. Try again when it has finished.", ItemStatus.Warning);
+            return false;
+        }
+
+        private Task<IPluginUIView> RunGated(string operationName, Func<Task> work, Action<string, ItemStatus> reportStatus)
+        {
+            if (!TryEnterGate(operationName, reportStatus, out var token))
+                return Task.FromResult<IPluginUIView>(this);
+
+            Task.Run(async () =>
+            {
+                var timer = System.Diagnostics.Stopwatch.StartNew();
+                try
+                {
+                    // Let the page receive this command's response before the first status update is raised.
+                    await Task.Delay(300);
+                    await work();
+                }
+                catch (Exception ex) { logger.ErrorException("{0}: unhandled error", ex, operationName); }
+                finally
+                {
+                    token.Dispose();
+                    logger.Info("{0}: finished in {1} ms.", operationName, timer.ElapsedMilliseconds);
+                }
+            });
+            return Task.FromResult<IPluginUIView>(this);
+        }
+
+        /// <summary>For quick operations: the work runs inside the command, so the command's response already carries the result.</summary>
+        private async Task<IPluginUIView> RunGatedInline(string operationName, Func<Task> work, Action<string, ItemStatus> reportStatus)
+        {
+            if (!TryEnterGate(operationName, reportStatus, out var token))
+                return this;
+
+            var timer = System.Diagnostics.Stopwatch.StartNew();
+            try { await work(); }
+            catch (Exception ex) { logger.ErrorException("{0}: unhandled error", ex, operationName); }
+            finally
+            {
+                token.Dispose();
+                logger.Info("{0}: finished in {1} ms.", operationName, timer.ElapsedMilliseconds);
+            }
+            return this;
         }
 
         private void HandlePreview()
@@ -333,8 +444,7 @@ namespace EmbyPlaylistManager.UI
         {
             this.Options.Status.StatusText = message;
             this.Options.Status.Status = status;
-            this.Options.ExportButton.IsEnabled = status != ItemStatus.InProgress;
-            this.Options.ImportButton.IsEnabled = status != ItemStatus.InProgress;
+            SetButtonsEnabled(status != ItemStatus.InProgress);
             RaiseUIViewInfoChanged();
         }
 
@@ -342,10 +452,140 @@ namespace EmbyPlaylistManager.UI
         {
             this.Options.ShadowStatus.StatusText = message;
             this.Options.ShadowStatus.Status = status;
-            this.Options.ScanButton.IsEnabled = status != ItemStatus.InProgress;
-            this.Options.RepairAllButton.IsEnabled = status != ItemStatus.InProgress;
-            this.Options.ExportMissingButton.IsEnabled = status != ItemStatus.InProgress;
+            SetButtonsEnabled(status != ItemStatus.InProgress);
             RaiseUIViewInfoChanged();
+        }
+
+        private void SetSortStatus(string message, ItemStatus status)
+        {
+            this.Options.SortStatus.StatusText = message;
+            this.Options.SortStatus.Status = status;
+            SetButtonsEnabled(status != ItemStatus.InProgress);
+            RaiseUIViewInfoChanged();
+        }
+
+        /// <summary>While any operation runs every action button is disabled. Apply Sort additionally needs a fresh preview that has something to do.</summary>
+        private void SetButtonsEnabled(bool enabled)
+        {
+            var o = this.Options;
+            o.ExportButton.IsEnabled = enabled;
+            o.ImportButton.IsEnabled = enabled;
+            o.ScanButton.IsEnabled = enabled;
+            o.RepairAllButton.IsEnabled = enabled;
+            o.ExportMissingButton.IsEnabled = enabled;
+            o.SortRefreshButton.IsEnabled = enabled;
+            o.SortPreviewButton.IsEnabled = enabled;
+            o.SortApplyButton.IsEnabled = enabled && this.sortPlan != null && this.sortPlan.ChangedPositions > 0;
+        }
+
+        // ---- Sorting ----------------------------------------------------------------------------------------
+
+        /// <summary>Fills the playlist dropdown. Playlists are public, so the viewing user (or the first user) sees the same list as everyone.</summary>
+        private void RefreshSortChoices()
+        {
+            try
+            {
+                var plugin = this.Plugin;
+                if (plugin == null) return;
+                var choices = plugin.SortService.ListPlaylists(GetUser());
+                this.Options.SortPlaylistChoices = choices;
+
+                var selected = this.Options.SortPlaylistId;
+                bool stillThere = !string.IsNullOrEmpty(selected) &&
+                    choices.Any(c => string.Equals(Convert.ToString(c.Value), selected, StringComparison.OrdinalIgnoreCase));
+                if (!stillThere)
+                    this.Options.SortPlaylistId = choices.Count > 0 ? Convert.ToString(choices[0].Value) : null;
+                logger.Info("Sort: {0} playlists listed for the dropdown; selected: {1}.", choices.Count, this.Options.SortPlaylistId ?? "none");
+                RaiseUIViewInfoChanged();
+            }
+            catch (Exception ex)
+            {
+                logger.ErrorException("Could not list playlists for sorting", ex);
+            }
+        }
+
+        private Task HandleSortPreview()
+        {
+            SetSortStatus("Reading the playlist...", ItemStatus.InProgress);
+            this.sortPlan = null;
+            var previewTimer = System.Diagnostics.Stopwatch.StartNew();
+            logger.Info("Sort preview: started for playlist {0} (sort {1}, direction {2}).",
+                this.Options.SortPlaylistId ?? "none", this.Options.SortMode, this.Options.SortDirectionChoice);
+            try
+            {
+                Guid playlistId;
+                if (!Guid.TryParse(this.Options.SortPlaylistId, out playlistId))
+                {
+                    SetSortStatus("Choose a playlist first.", ItemStatus.Warning);
+                    return Task.CompletedTask;
+                }
+
+                var sorter = this.Plugin.SortService;
+                var plan = sorter.BuildPlan(GetUser(), playlistId, this.Options.SortMode, this.Options.SortDirectionChoice);
+                logger.Info("Sort preview: '{0}' has {1} items, {2} change position, {3} planned moves{4}. Plan built in {5} ms.",
+                    plan.PlaylistName, plan.SnapshotEntryIds.Count, plan.ChangedPositions, plan.Moves.Count, plan.UseRebuild ? " (rebuild)" : string.Empty, previewTimer.ElapsedMilliseconds);
+
+                // Fill the existing list in place and use the same row shape as the other lists on this page (status, icon, icon mode).
+                var list = this.Options.SortPreviewList;
+                list.Clear();
+                foreach (var row in sorter.BuildPreviewRows(plan))
+                {
+                    bool moved = row.OldPosition != row.NewPosition;
+                    list.Add(new GenericListItem
+                    {
+                        PrimaryText = $"{row.NewPosition}. {row.Text}",
+                        SecondaryText = moved ? $"now at position {row.OldPosition}" : "stays in place",
+                        Status = ItemStatus.Succeeded,
+                        Icon = moved ? IconNames.info : IconNames.check_circle,
+                        IconMode = ItemListIconMode.SmallRegular
+                    });
+                }
+                this.sortPlan = plan;
+
+                var text = plan.DescribeEffect() + (plan.Target.Count > list.Count ? $" Showing the first {list.Count}." : string.Empty);
+                logger.Info("Sort preview: showing {0} rows; updating the page.", list.Count);
+                SetSortStatus(text, plan.ChangedPositions == 0 ? ItemStatus.Succeeded : ItemStatus.Warning);
+                logger.Info("Sort preview: page updated after {0} ms.", previewTimer.ElapsedMilliseconds);
+            }
+            catch (Exception ex)
+            {
+                logger.ErrorException("Sort preview failed", ex);
+                this.sortPlan = null;
+                SetSortStatus($"Preview failed: {ex.Message}", ItemStatus.Failed);
+            }
+            return Task.CompletedTask;
+        }
+
+        private async Task HandleSortApply()
+        {
+            var plan = this.sortPlan;
+            if (plan == null)
+            {
+                SetSortStatus("Click Preview Sort first.", ItemStatus.Warning);
+                return;
+            }
+
+            SetSortStatus("Sorting...", ItemStatus.InProgress);
+            try
+            {
+                var result = await this.Plugin.SortService.Apply(
+                    GetUser(),
+                    plan,
+                    message => SetSortStatus(message, ItemStatus.InProgress),
+                    this.Options.EnableShadow,
+                    System.Threading.CancellationToken.None);
+
+                // A plan is single-use: the playlist has changed (or the attempt failed), so the preview is out of date either way.
+                this.sortPlan = null;
+                this.Options.SortPreviewList.Clear();
+                SetSortStatus(result.Message, result.Success ? ItemStatus.Succeeded : ItemStatus.Failed);
+            }
+            catch (Exception ex)
+            {
+                logger.ErrorException("Sort failed", ex);
+                this.sortPlan = null;
+                SetSortStatus($"Sort failed: {ex.Message}", ItemStatus.Failed);
+            }
         }
 
         private async Task HandleExportMissing()
@@ -473,10 +713,7 @@ namespace EmbyPlaylistManager.UI
                         ? Path.GetFileName(Path.GetDirectoryName(livePlaylist.Path))
                         : "unknown";
 
-                    var liveItems = libraryManager.GetItemList(new InternalItemsQuery(user)
-                    {
-                        ListIds = new[] { livePlaylist.InternalId }
-                    });
+                    var liveItems = playlistService.GetPlaylistEntries(user, livePlaylist.InternalId);
 
                     if (shadow.Items.Count == 0)
                     {
@@ -619,10 +856,7 @@ namespace EmbyPlaylistManager.UI
                         totalFixed++;
                     }
 
-                    var liveItems = libraryManager.GetItemList(new InternalItemsQuery(user)
-                    {
-                        ListIds = new[] { livePlaylist.InternalId }
-                    });
+                    var liveItems = playlistService.GetPlaylistEntries(user, livePlaylist.InternalId);
 
                     // Full restore: clear live playlist first
                     if (fullRestore && liveItems.Length > 0)

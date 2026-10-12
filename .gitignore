@@ -416,3 +416,7 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# Junction to the local Emby Server log folder (contains live-server data; never commit)
+/emby-logs
+/sort-log-excerpt.txt

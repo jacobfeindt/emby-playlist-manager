@@ -1,9 +1,11 @@
 using System.Collections.Generic;
 using System.ComponentModel;
 using Emby.Web.GenericEdit;
+using Emby.Web.GenericEdit.Common;
 using Emby.Web.GenericEdit.Elements;
 using Emby.Web.GenericEdit.Elements.List;
 using Emby.Web.GenericEdit.Validation;
+using EmbyPlaylistManager.Sorting;
 using MediaBrowser.Model.Attributes;
 
 namespace EmbyPlaylistManager
@@ -95,6 +97,45 @@ namespace EmbyPlaylistManager
         public SpacerItem Spacer3 { get; set; } = new SpacerItem();
         public LabelItem Divider3 { get; set; } = new LabelItem(DividerLine);
         public SpacerItem Spacer3b { get; set; } = new SpacerItem();
+
+        // --- Sort ---
+        public CaptionItem SortCaption { get; set; } = new CaptionItem("Sort a Playlist");
+
+        // Source list for the playlist dropdown. Filled at runtime; emptied before saving so it is never persisted.
+        [Browsable(false)]
+        public List<EditorSelectOption> SortPlaylistChoices { get; set; } = new List<EditorSelectOption>();
+
+        [DisplayName("Playlist")]
+        [Description("The playlist to sort. Playlists that share a name are told apart by the short id in brackets.")]
+        [SelectItemsSource(nameof(SortPlaylistChoices))]
+        [AutoPostBack("SortChanged", nameof(SortPlaylistId))]
+        public string SortPlaylistId { get; set; }
+
+        [DisplayName("Sort by")]
+        [Description("TV order sorts by series, then season, then episode (specials last). Items with no value for the chosen sort, such as no air date, always go last.")]
+        [AutoPostBack("SortChanged", nameof(SortMode))]
+        public PlaylistSortMode SortMode { get; set; } = PlaylistSortMode.TvOrder;
+
+        [DisplayName("Direction")]
+        [Description("Not used for shuffle.")]
+        [AutoPostBack("SortChanged", nameof(SortDirectionChoice))]
+        public SortDirection SortDirectionChoice { get; set; } = SortDirection.Ascending;
+
+        public ButtonItem SortRefreshButton { get; set; } = new ButtonItem("Refresh Playlists") { Icon = IconNames.refresh, Data1 = "SortRefresh" };
+
+        public ButtonItem SortPreviewButton { get; set; } = new ButtonItem("Preview Sort") { Icon = IconNames.search, Data1 = "SortPreview" };
+
+        [DisplayName("")]
+        [Description("The first 200 items in the new order, with where each one is now. Nothing changes until you click Apply Sort.")]
+        public GenericItemList SortPreviewList { get; set; } = new GenericItemList();
+
+        public ButtonItem SortApplyButton { get; set; } = new ButtonItem("Apply Sort") { Icon = IconNames.build, Data1 = "SortApply", IsEnabled = false };
+
+        public StatusItem SortStatus { get; set; } = new StatusItem("Sort Status", "Choose a playlist and a sort, then click Preview Sort.", ItemStatus.Unavailable);
+
+        public SpacerItem Spacer4 { get; set; } = new SpacerItem();
+        public LabelItem Divider4 { get; set; } = new LabelItem(DividerLine);
+        public SpacerItem Spacer4b { get; set; } = new SpacerItem();
 
         // --- Status ---
         public StatusItem Status { get; set; } = new StatusItem("Status", "No operation started yet.", ItemStatus.Unavailable);

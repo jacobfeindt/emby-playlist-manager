@@ -1,8 +1,10 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Threading;
 using EmbyPlaylistManager.Models;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Controller.Entities;
@@ -169,14 +171,125 @@ namespace EmbyPlaylistManager.Storage
             }
         }
 
+        // ---- Update coalescing -------------------------------------------------------------------------------------
+        // Playlist events arrive once per added/removed/moved row. Writing the shadow on every event rewrote the same
+        // files from many threads at once (and N times for N rows), so events are collapsed into one write per playlist
+        // after a short quiet period, and writes for one playlist are serialized.
+
+        private static readonly TimeSpan CoalesceDelay = TimeSpan.FromSeconds(3);
+
+        private sealed class PendingUpdate
+        {
+            public Timer Timer;
+            public User User;
+            public BaseItem Playlist;
+            public string Trigger;
+        }
+
+        // Static on purpose: Emby builds several Plugin (and so ShadowPlaylistService) instances, and the event handlers, the page
+        // and the scheduled task must all see the same timers, write locks and suppression counts.
+        private static readonly ConcurrentDictionary<Guid, PendingUpdate> _pending = new ConcurrentDictionary<Guid, PendingUpdate>();
+        private static readonly ConcurrentDictionary<Guid, object> _writeLocks = new ConcurrentDictionary<Guid, object>();
+        private static readonly ConcurrentDictionary<long, int> _suppressed = new ConcurrentDictionary<long, int>();
+
+        private object GetWriteLock(Guid playlistId)
+        {
+            return _writeLocks.GetOrAdd(playlistId, _ => new object());
+        }
+
+        private bool IsSuppressed(long playlistInternalId)
+        {
+            return _suppressed.TryGetValue(playlistInternalId, out var n) && n > 0;
+        }
+
+        /// <summary>
+        /// Schedules a shadow write for the playlist. Repeated calls within the coalescing window restart the timer, so a burst
+        /// of events produces a single write. Ignored while the playlist is suppressed (see <see cref="Suppress"/>).
+        /// </summary>
+        public void RequestUpdate(User user, BaseItem playlistItem, string triggerEvent)
+        {
+            if (user == null || playlistItem == null) return;
+            if (IsSuppressed(playlistItem.InternalId)) return;
+
+            var pending = _pending.GetOrAdd(playlistItem.Id, id =>
+            {
+                var p = new PendingUpdate();
+                p.Timer = new Timer(FirePending, id, Timeout.Infinite, Timeout.Infinite);
+                return p;
+            });
+            lock (pending)
+            {
+                pending.User = user;
+                pending.Playlist = playlistItem;
+                pending.Trigger = triggerEvent;
+                pending.Timer.Change(CoalesceDelay, Timeout.InfiniteTimeSpan);
+            }
+        }
+
+        private void FirePending(object state)
+        {
+            var id = (Guid)state;
+            if (!_pending.TryGetValue(id, out var pending)) return;
+            User user; BaseItem playlist; string trigger;
+            lock (pending)
+            {
+                user = pending.User;
+                playlist = pending.Playlist;
+                trigger = pending.Trigger;
+            }
+            try
+            {
+                if (playlist == null || IsSuppressed(playlist.InternalId)) return;
+                UpdateShadow(user, playlist, trigger);
+            }
+            catch (Exception ex)
+            {
+                _logger.ErrorException("Coalesced shadow update failed for playlist {0}", ex, id);
+            }
+        }
+
+        /// <summary>
+        /// Suppresses event-driven shadow writes for one playlist until the returned token is disposed. Used by operations that
+        /// change a playlist many times (sorting) and then write the shadow once themselves.
+        /// </summary>
+        public IDisposable Suppress(long playlistInternalId)
+        {
+            _suppressed.AddOrUpdate(playlistInternalId, 1, (k, v) => v + 1);
+            return new SuppressToken(playlistInternalId);
+        }
+
+        private sealed class SuppressToken : IDisposable
+        {
+            private readonly long _id;
+            private int _disposed;
+
+            public SuppressToken(long id)
+            {
+                _id = id;
+            }
+
+            public void Dispose()
+            {
+                if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+                int remaining = _suppressed.AddOrUpdate(_id, 0, (k, v) => Math.Max(0, v - 1));
+                if (remaining == 0) _suppressed.TryRemove(_id, out _);
+            }
+        }
+
         public void UpdateShadow(User user, BaseItem playlistItem, string triggerEvent, bool cleanDuplicates = true)
+        {
+            // Writes for one playlist are serialized so two callers can never interleave on the same shadow and backup files.
+            lock (GetWriteLock(playlistItem.Id))
+            {
+                UpdateShadowCore(user, playlistItem, triggerEvent, cleanDuplicates);
+            }
+        }
+
+        private void UpdateShadowCore(User user, BaseItem playlistItem, string triggerEvent, bool cleanDuplicates)
         {
             try
             {
-                var items = _libraryManager.GetItemList(new InternalItemsQuery(user)
-                {
-                    ListIds = new[] { playlistItem.InternalId }
-                });
+                var items = PlaylistQueries.GetOrderedEntries(_libraryManager, user, playlistItem.InternalId, _logger);
 
                 var dto = new PlaylistExportDto
                 {
@@ -186,30 +299,7 @@ namespace EmbyPlaylistManager.Storage
 
                 foreach (var item in items)
                 {
-                    var itemDto = new PlaylistItemDto { Name = item.Name };
-
-                    if (item.ProviderIds != null)
-                        foreach (var kvp in item.ProviderIds)
-                            itemDto.ProviderIds[kvp.Key] = kvp.Value;
-
-                    if (item.GetType().Name == "Episode")
-                    {
-                        var seriesProp = item.GetType().GetProperty("SeriesProviderIds");
-                        var seriesIds = seriesProp?.GetValue(item) as IDictionary<string, string>;
-                        if (seriesIds != null)
-                        {
-                            if (seriesIds.TryGetValue("Tmdb", out var sTmdb) && int.TryParse(sTmdb, out var sTmdbId))
-                                itemDto.SeriesTmdbId = sTmdbId;
-                            if (seriesIds.TryGetValue("Tvdb", out var sTvdb) && int.TryParse(sTvdb, out var sTvdbId))
-                                itemDto.SeriesTvdbId = sTvdbId;
-                        }
-                        var seasonProp = item.GetType().GetProperty("ParentIndexNumber");
-                        var indexProp = item.GetType().GetProperty("IndexNumber");
-                        if (seasonProp != null) itemDto.Season = (int?)seasonProp.GetValue(item);
-                        if (indexProp != null) itemDto.Episode = (int?)indexProp.GetValue(item);
-                    }
-
-                    dto.Items.Add(itemDto);
+                    dto.Items.Add(PlaylistItemDto.FromItem(item, user, _libraryManager));
                 }
 
                 var path = ShadowFilePath(playlistItem.Name, playlistItem.Id);

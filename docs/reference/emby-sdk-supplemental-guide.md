@@ -166,6 +166,21 @@ All paths relative to server base URL (e.g. `http://localhost:8096/emby`). Auth 
 
 Note: REST `{Id}` is the Guid string (same as `item.Id.ToString("N")` or the string from `PlaylistCreationResult.Id`). This differs from the plugin-side `InternalId` (long) used with `IPlaylistManager`.
 
+### Playlist entries, order and moving (verified from the 4.9.3 assemblies; see `sort_playlist.md`)
+
+A playlist is a list of **rows**, and each row has its own **entry id**. The entry id is not the library item's `InternalId`.
+
+| Fact | Detail |
+|---|---|
+| Entry id | `BaseItem.ListItemEntryId` (`long`). It is set on items returned by an `InternalItemsQuery` that has `ListIds`. The same library item can appear in a playlist more than once, each time with a different entry id. |
+| Order | A bare `ListIds` query has **no guaranteed order**. Set `OrderBy = new[] { (ItemSortBy.ListItemOrder, SortOrder.Ascending) }` to read the playlist in playlist order. |
+| `RemoveFromPlaylist(playlistId, long[] entryIds)` | Takes **entry ids**. Passing item `InternalId`s removes nothing, or the wrong rows. |
+| `MoveItem(playlistId, entryId, newIndex)` | Takes an entry id. It reads all rows in order, removes the row, inserts it at `newIndex`, then rewrites every row in one transaction, so each call costs O(n). Entry ids stay the same. It fires one `PlaylistItemsMoved` event per call. |
+| `AddToPlaylist(playlistId, itemIds, user)` | Only appends to the end. The synchronous overload blocks until done and allows duplicates. |
+| Rebuild (remove all, add back) | Gives every row a new entry id and queues a metadata refresh for each added item. Prefer `MoveItem` for reordering unless the number of moves is very large. |
+
+The plugin reads playlists through `PlaylistQueries.GetOrderedEntries` so that every read uses `ListItemOrder` and entry ids are available. Do not add new `ListIds` reads that skip it.
+
 ### REST scheduled task endpoints
 
 | Method | Path | Purpose |
@@ -201,7 +216,9 @@ All in `MediaBrowser.Model.Attributes` unless noted.
 | `[EditFolderPicker]` | Renders folder browser |
 | `[EditMultiline(n)]` | Multiline text area, n rows |
 | `[IsPassword]` | Masks input |
-| `[AutoPostBack]` | Posts back to server on change (triggers `OnSaveCommand`) |
+| `[AutoPostBack("Cmd", nameof(Prop))]` | Posts back to the server when the value changes and calls the page view's **`RunCommand`** with `commandId = "Cmd"`. It does **not** call `OnSaveCommand`. |
+| `[SelectItemsSource(nameof(List))]` | Renders a `string` property as a dropdown. `List` is a `List<EditorSelectOption>` property on the same options class (`Emby.Web.GenericEdit.Common`). Mark the list `[Browsable(false)]` and empty it before saving so it is not persisted. |
+| Enum property | Renders as a dropdown automatically. Use `[Description]` on each enum member for the item text. |
 | `[Decimals(n)]` | Decimal places for double/float |
 | `[TristateTrueText("")]` / `[TristateFalseText("")]` | Labels for nullable bool dropdown |
 
@@ -214,7 +231,7 @@ public LabelItem   Info      { get; set; } = new LabelItem("Static text");
 public ButtonItem  GoButton  { get; set; } = new ButtonItem("Button Label");
 ```
 
-`ButtonItem` triggers `OnSaveCommand(itemId, commandId, data)` in the page view — `commandId` matches the property name.
+`ButtonItem` clicks arrive in the page view's `RunCommand(itemId, commandId, data)`. This plugin sets `Data1` on each button to a command key (for example `"SortPreview"`) and switches on `commandId`. `OnSaveCommand` runs only for the page's own **Save** button.
 
 ### GenericListItem
 
@@ -258,10 +275,14 @@ File is saved as `{pluginName}.json` in `PluginConfigurationsPath`. Options that
 | Emby playlist name deduplication | When `CreatePlaylist` is called with a name that already exists, Emby creates the folder as `{Name} [playlist] - 1`, `- 2` etc. but the playlist's internal `Name` property still returns the original name. Multiple playlists can share the same `Name` — never use name alone to identify a specific playlist. Always match by `Id` (GUID) first, fall back to name only when GUID is unavailable (e.g. after a restore). |
 | Shadow deduplication by name | Never delete shadow files based on playlist name matching alone — users can have multiple playlists with the same name. Only delete a shadow when you have explicit certainty it is stale (e.g. you just recreated the playlist and hold the new GUID). |
 | `AddToPlaylist` is void | Do not await — it returns void, not Task |
+| `Resolve<Plugin>()` builds a new `Plugin` every call | `IApplicationHost.Resolve<Plugin>()` runs the `Plugin` constructor each time (seen as repeated "Playlist Manager plugin loaded." log lines), so instance fields are not shared between the page, the scheduled task, the HTTP API and the event handlers. State that must be shared (the operation gate, shadow timers, locks, suppression) is `static`. Resolve it once per page view, not per access. |
+| Fast background work can lose its UI update | A handler that finishes within a few ms of the click can raise `RaiseUIViewInfoChanged` before the page is listening, leaving the old "in progress" state showing. Do quick work inside `RunCommand` and return the view, or delay the first update in a background task. |
 | `IsPublic` on `PlaylistCreationRequest` | `true` = shared `Playlists` folder; `false`/omitted = `UserPlaylists` private to `User`. Not in XML docs but confirmed in DLL. Always set `true` on import. |
 | `OwnerUserId` / `LinkedUserIds` don't exist | Emby has no per-playlist owner ID — ownership is `IsPublic` + which folder the playlist lives in |
 | `PlaylistCreationResult.Id` is a string | Parse as Guid: `new Guid(result.Id)`, then `GetItemById(guid)` to get `InternalId` |
-| `InternalId` vs `Id` | Playlist operations (`AddToPlaylist`, `RemoveFromPlaylist`) take `long` (InternalId); `GetItemById` takes `Guid` (Id) |
+| `InternalId` vs `Id` | `AddToPlaylist` takes `long` item InternalIds; `GetItemById` takes `Guid` (Id) |
+| Entry id vs `InternalId` | `RemoveFromPlaylist` and `MoveItem` take **entry ids** (`ListItemEntryId`), not item InternalIds. Earlier versions of this plugin passed InternalIds to `RemoveFromPlaylist`; that was a bug. |
+| Unordered playlist reads | A `ListIds` query without `OrderBy ListItemOrder` may return rows in any order. Shadows, exports and repairs must read in playlist order. |
 | `ParentIds` is plural | `InternalItemsQuery.ParentIds` is `long[]`, not `ParentId` singular |
 | `ILibraryManager.ItemUpdated` fires constantly | Must debounce or filter during library scans — do not do heavy work inline |
 | `netstandard2.0` won't work | Server is .NET 8; use `net8.0` target and reference server DLLs directly, not NuGet packages |
