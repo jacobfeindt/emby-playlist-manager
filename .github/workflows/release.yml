@@ -1,5 +1,9 @@
 name: Release
 
+env:
+  # Emby Server release whose assemblies the plugin is compiled against. Change this when a new Emby Server ships.
+  EMBY_VERSION: "4.10.1.0"
+
 on:
   push:
     tags:
@@ -30,7 +34,7 @@ jobs:
       - name: Download Emby Server DLLs
         run: |
           mkdir -p /tmp/emby-system
-          curl -L "https://github.com/MediaBrowser/Emby.Releases/releases/download/4.9.3.0/embyserver-netcore_4.9.3.0.zip" \
+          curl -fL "https://github.com/MediaBrowser/Emby.Releases/releases/download/${EMBY_VERSION}/embyserver-netcore_${EMBY_VERSION}.zip" \
             -o /tmp/emby.zip
           unzip -j /tmp/emby.zip \
             "system/MediaBrowser.Common.dll" \
@@ -67,7 +71,7 @@ jobs:
             3. Restart Emby Server
 
             ### Requirements
-            - Emby Server 4.9.3+
+            - Emby Server 4.9.3 or newer. Built against and tested on Emby Server ${{ env.EMBY_VERSION }}.
 
             See [README](https://github.com/${{ github.repository }}/blob/main/README.md) for full usage instructions.
           files: |
