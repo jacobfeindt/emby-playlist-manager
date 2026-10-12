@@ -57,7 +57,28 @@ namespace EmbyPlaylistManager
             var appPaths = appHost.Resolve<IApplicationPaths>();
             _shadowService = new ShadowPlaylistService(libraryManager, appPaths, _logger);
             _sortService = new PlaylistSortService(libraryManager, playlistManager, _shadowService, appPaths, _logger);
-            _logger.Info("Playlist Manager plugin loaded (DLL built {0:yyyy-MM-dd HH:mm:ss} UTC).", File.GetLastWriteTimeUtc(typeof(Plugin).Assembly.Location));
+            _logger.Info("Playlist Manager plugin loaded ({0}).", DescribeBuild());
+        }
+
+        /// <summary>
+        /// Version and, when known, build time of this DLL for the log. It must never throw: Emby can load a plugin from memory,
+        /// which leaves Assembly.Location empty, and an exception here would stop the whole plugin from loading.
+        /// </summary>
+        private static string DescribeBuild()
+        {
+            try
+            {
+                var assembly = typeof(Plugin).Assembly;
+                var text = "version " + assembly.GetName().Version;
+                var location = assembly.Location;
+                if (!string.IsNullOrEmpty(location) && File.Exists(location))
+                    text += ", DLL built " + File.GetLastWriteTimeUtc(location).ToString("yyyy-MM-dd HH:mm:ss") + " UTC";
+                return text;
+            }
+            catch (Exception)
+            {
+                return "build unknown";
+            }
         }
 
         public override string Name => PluginName;
