@@ -1,0 +1,861 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Michigan Solar + Storage Sizing & ROI</title>
+<style>
+  :root{
+    --bg:#0f1420; --panel:#161d2c; --panel2:#1b2334; --line:#26304a;
+    --text:#e6ebf5; --muted:#8a93a8; --accent:#34d399; --amber:#fbbf24;
+    --red:#f87171; --blue:#60a5fa;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:var(--bg);color:var(--text);line-height:1.45;}
+  .wrap{max-width:1280px;margin:0 auto;padding:20px 20px 60px;}
+  h1{font-size:1.5rem;margin:0 0 4px;}
+  h1 .sub{display:block;font-size:.82rem;color:var(--muted);font-weight:400;margin-top:2px;}
+  .intro{color:var(--muted);font-size:.9rem;max-width:900px;margin:0 0 18px;}
+  .intro b{color:var(--text);}
+  .grid{display:grid;grid-template-columns:360px 1fr;gap:18px;}
+  @media(max-width:960px){.grid{grid-template-columns:1fr;}}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;}
+  .panel h2{font-size:.8rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0 0 12px;}
+  .ctl{margin-bottom:14px;}
+  .ctl-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px;}
+  .ctl label{font-size:.86rem;font-weight:600;}
+  .ctl .val{font-variant-numeric:tabular-nums;color:var(--accent);font-weight:700;font-size:.88rem;}
+  .ctl .hint{font-size:.72rem;color:var(--muted);margin-top:2px;}
+  input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:6px;border-radius:3px;
+    background:#232c44;outline:none;cursor:pointer;margin:2px 0;}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:18px;height:18px;border-radius:50%;
+    background:var(--accent);border:2px solid #0f1420;box-shadow:0 0 0 1px var(--accent);cursor:pointer;}
+  input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:var(--accent);
+    border:2px solid #0f1420;box-shadow:0 0 0 1px var(--accent);cursor:pointer;}
+  .btn{background:#1d2740;color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px 12px;
+    cursor:pointer;font-size:.82rem;margin-top:4px;}
+  .btn:hover{background:#26304a;}
+  input[type=range]:disabled{opacity:.4;cursor:not-allowed;}
+  .switch{position:relative;display:inline-block;width:46px;height:24px;margin:4px 0 2px;}
+  .switch input{opacity:0;width:0;height:0;}
+  .switch .slider{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:#232c44;border-radius:24px;transition:.2s;}
+  .switch .slider:before{content:"";position:absolute;height:18px;width:18px;left:3px;top:3px;background:#8a93a8;border-radius:50%;transition:.2s;}
+  .switch input:checked + .slider{background:#34d399;}
+  .switch input:checked + .slider:before{transform:translateX(22px);background:#0f1420;}
+  .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px;}
+  @media(max-width:680px){.cards{grid-template-columns:repeat(2,1fr);}}
+  .card{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;}
+  .card .k{font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);}
+  .card .v{font-size:1.18rem;font-weight:700;font-variant-numeric:tabular-nums;margin-top:2px;}
+  .card .d{font-size:.7rem;color:var(--muted);margin-top:1px;}
+  .accent{color:var(--accent);}.amber{color:var(--amber);}.red{color:var(--red);}.blue{color:var(--blue);}
+  .chartbox{margin-bottom:16px;}
+  .chartbox .legend{display:flex;flex-wrap:wrap;gap:14px;font-size:.75rem;color:var(--muted);margin-top:6px;}
+  .legend span{display:inline-flex;align-items:center;gap:5px;}
+  .swatch{width:10px;height:10px;border-radius:2px;display:inline-block;}
+  canvas{width:100%;height:230px;display:block;background:var(--panel);border:1px solid var(--line);border-radius:10px;}
+  .callout{background:rgba(52,211,153,.08);border:1px solid rgba(52,211,153,.35);border-radius:10px;
+    padding:12px 14px;font-size:.9rem;margin:0 0 14px;}
+  .callout b{color:var(--accent);}
+  table{width:100%;border-collapse:collapse;font-size:.78rem;font-variant-numeric:tabular-nums;}
+  th,td{padding:5px 7px;text-align:right;border-bottom:1px solid var(--line);}
+  th:first-child,td:first-child{text-align:left;}
+  th{color:var(--muted);font-weight:600;font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;}
+  td.neg{color:var(--red);} td.pos{color:var(--accent);}
+  .foot{color:var(--muted);font-size:.75rem;margin-top:18px;max-width:900px;}
+  .foot ul{margin:6px 0 0;padding-left:18px;}
+  .foot li{margin-bottom:4px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Michigan Solar + Storage Sizing &amp; ROI
+    <span class="sub">Find the array &amp; battery size that maximizes value against <i>your</i> usage — not just max production.</span>
+  </h1>
+  <p class="intro">
+    The <b>peak point</b> is where an extra panel stops paying for itself. In Michigan the trap is summer: long days make
+    far more power than you use, and that surplus either earns a low export credit or is wasted. More panels also cover you
+    better in the short winter days. <b>Storage value is different:</b> it comes from (1) riding through <b>consecutive cloudy days</b>
+    and (2) capturing the <b>midday peak</b> for your evening load. This runs an <b>hourly</b> model with day-by-day clouds so both are counted.
+  </p>
+
+  <div class="grid">
+    <!-- ============ CONTROLS ============ -->
+    <div class="panel">
+      <h2>Season (time of year)</h2>
+      <div class="ctl">
+        <div class="ctl-head"><label for="s-day">Day of year</label><span class="val" id="s-day-val"></span></div>
+        <input type="range" id="s-day" min="1" max="365" step="1" value="183">
+        <div class="hint">Drives daylight hours &amp; the hourly profile chart below.</div>
+      </div>
+      <div class="ctl">
+        <div class="ctl-head"><label for="s-lat">Latitude (°N)</label><span class="val" id="s-lat-val"></span></div>
+        <input type="range" id="s-lat" min="41.5" max="47.5" step="0.1" value="44">
+        <div class="hint">Detroit ≈ 42.3 · Lansing ≈ 42.7 · Marquette ≈ 46.5</div>
+      </div>
+
+      <h2>Weather &amp; clouds</h2>
+      <div class="ctl">
+        <div class="ctl-head"><label for="s-cloudvar">Day-to-day cloud variability</label><span class="val" id="s-cloudvar-val"></span></div>
+        <input type="range" id="s-cloudvar" min="0.15" max="0.65" step="0.05" value="0.40">
+        <div class="hint">How much daily sun swings around the monthly average. MI is gray: higher is realistic.</div>
+      </div>
+      <div class="ctl">
+        <div class="ctl-head"><label for="s-cloudrun">Cloudy-run length (persistence)</label><span class="val" id="s-cloudrun-val"></span></div>
+        <input type="range" id="s-cloudrun" min="0.30" max="0.75" step="0.05" value="0.55">
+        <div class="hint">Higher = longer stretches of overcast days in a row.</div>
+      </div>
+
+      <h2>System size</h2>
+      <div class="ctl">
+        <div class="ctl-head"><label for="s-array">Array size (kW DC)</label><span class="val" id="s-array-val"></span></div>
+        <input type="range" id="s-array" min="0" max="60" step="0.5" value="8">
+        <div class="hint">Michigan residential: 6–12 kW; larger for all-electric / EV / whole-home.</div>
+      </div>
+      <div class="ctl">
+        <div class="ctl-head"><label for="s-battery">Battery storage (kWh)</label><span class="val" id="s-battery-val"></span></div>
+        <input type="range" id="s-battery" min="0" max="120" step="0.5" value="13.5">
+        <div class="hint">One Powerwall 3 ≈ 13.5 kWh; 120 kWh = whole-home multi-day bank. Usable ≈ 90%.</div>
+      </div>
+      <div class="ctl">
+        <div class="ctl-head"><label for="s-derate">System efficiency (derate)</label><span class="val" id="s-derate-val"></span></div>
+        <input type="range" id="s-derate" min="0.40" max="0.95" step="0.01" value="0.80">
+        <div class="hint">Lower for shading, aging, snow, sub-optimal tilt/orientation. 0.80 = clean, well-oriented array.</div>
+      </div>
+      <div class="ctl">
+        <div class="ctl-head"><label for="s-invlimit">Output ceiling (kW)</label><span class="val" id="s-invlimit-val"></span></div>
+        <input type="range" id="s-invlimit" min="0" max="20" step="0.1" value="0">
+        <div class="hint">0 = no cap. Models any hard limit — e.g. an MPPT current limit (60A × ~57V ≈ 3.4 kW). Set 3.4 for your controller.</div>
+      </div>
+
+      <h2>Usage &amp; rates</h2>
+      <div class="ctl">
+        <div class="ctl-head"><label for="s-usage">Annual electricity usage (kWh)</label><span class="val" id="s-usage-val"></span></div>
+        <input type="range" id="s-usage" min="1000" max="60000" step="500" value="10000">
+        <div class="hint">Michigan average ≈ 9,000–10,500 kWh/yr; higher for all-electric / EV households.</div>
+      </div>
+      <div class="ctl">
+        <div class="ctl-head"><label for="s-dark">Evening/night load (%)</label><span class="val" id="s-dark-val"></span></div>
+        <input type="range" id="s-dark" min="20" max="85" step="5" value="55">
+        <div class="hint">Share of daily use in evening + overnight ("dark hours"). Higher = more to shift from noon to night.</div>
+      </div>
+      <div class="ctl">
+        <div class="ctl-head"><label for="s-ac">Summer A/C usage boost (%)</label><span class="val" id="s-ac-val"></span></div>
+        <input type="range" id="s-ac" min="0" max="60" step="5" value="25">
+        <div class="hint">Extra Jun–Aug load vs. a flat annual profile.</div>
+      </div>
+      <div class="ctl">
+        <div class="ctl-head"><label for="s-retail">Retail rate ($/kWh)</label><span class="val" id="s-retail-val"></span></div>
+        <input type="range" id="s-retail" min="0.10" max="0.40" step="0.005" value="0.20">
+        <div class="hint">MI ≈ $0.18–0.20 (UP higher).</div>
+      </div>
+      <div class="ctl">
+        <div class="ctl-head"><label for="s-net">Net metering (return excess to grid)</label><span class="val" id="s-net-val">Off</span></div>
+        <label class="switch"><input type="checkbox" id="s-net"><span class="slider"></span></label>
+        <div class="hint">Off = your setup (draw only; surplus is curtailed/wasted). On = sell surplus at the credit below.</div>
+      </div>
+      <div class="ctl">
+        <div class="ctl-head"><label for="s-export">Export credit (% of retail)</label><span class="val" id="s-export-val"></span></div>
+        <input type="range" id="s-export" min="0" max="100" step="5" value="20">
+        <div class="hint">Applies only when net metering is On. 20% = $0.04 paid vs $0.20 bought.</div>
+      </div>
+
+      <h2>Costs</h2>
+      <div class="ctl">
+        <div class="ctl-head"><label for="s-cost">System cost ($/W)</label><span class="val" id="s-cost-val"></span></div>
+        <input type="range" id="s-cost" min="0.30" max="4.50" step="0.05" value="1.20">
+        <div class="hint">DIY all-in: panels ($0.50/W) + racking + inverter + MPPT + wiring ≈ $1.10–1.30/W.</div>
+      </div>
+      <div class="ctl">
+        <div class="ctl-head"><label for="s-battcost">Battery cost ($/kWh)</label><span class="val" id="s-battcost-val"></span></div>
+        <input type="range" id="s-battcost" min="100" max="1000" step="10" value="170">
+        <div class="hint">Installed $/kWh. A 48V 100Ah (4.8 kWh) at $830 ≈ $173/kWh.</div>
+      </div>
+      <div class="ctl">
+        <div class="ctl-head"><label for="s-itc">Federal tax credit (%)</label><span class="val" id="s-itc-val"></span></div>
+        <input type="range" id="s-itc" min="0" max="40" step="1" value="0">
+        <div class="hint">Federal investment tax credit. Set to 0 if no credit applies.</div>
+      </div>
+
+      <button class="btn" id="reset">Reset to Michigan defaults</button>
+    </div>
+
+    <!-- ============ RESULTS ============ -->
+    <div>
+      <div class="callout" id="peak-callout"></div>
+
+      <div class="cards">
+        <div class="card"><div class="k">Daylight today</div><div class="v amber" id="c-day">—</div><div class="d" id="c-sun">sunrise – sunset</div></div>
+        <div class="card"><div class="k">Peak sun hrs today</div><div class="v" id="c-psh">—</div><div class="d">kWh/m²/day (tilted)</div></div>
+        <div class="card"><div class="k">Solar made today</div><div class="v accent" id="c-prodtoday">—</div><div class="d">kWh (simulated day, after clipping)</div></div>
+        <div class="card"><div class="k">Sweet-spot array</div><div class="v accent" id="c-peak">—</div><div class="d" id="c-peaknet">net value at peak</div></div>
+        <div class="card"><div class="k">Simple payback</div><div class="v" id="c-payback">—</div><div class="d">at your current size</div></div>
+        <div class="card"><div class="k">20-yr ROI</div><div class="v" id="c-roi">—</div><div class="d" id="c-savings">annual bill savings</div></div>
+        <div class="card"><div class="k">Usage offset</div><div class="v blue" id="c-offset">—</div><div class="d">% of annual kWh covered</div></div>
+        <div class="card"><div class="k">Self-consumed</div><div class="v blue" id="c-selfuse">—</div><div class="d">% of production used on-site</div></div>
+        <div class="card"><div class="k" id="c-export-label">Excess exported</div><div class="v red" id="c-export">—</div><div class="d" id="c-exportval">value / wasted</div></div>
+        <div class="card"><div class="k">Peak→dark loss</div><div class="v red" id="c-pdkloss">—</div><div class="d" id="c-pdkloss-sub">noon power re-bought at night</div></div>
+        <div class="card"><div class="k">Cloudy-day backup</div><div class="v blue" id="c-autonomy">—</div><div class="d" id="c-autonomy-sub">avg shortfall on cloudy days</div></div>
+        <div class="card"><div class="k">Longest grid stretch</div><div class="v red" id="c-gridrun">—</div><div class="d">consecutive days you buy power</div></div>
+        <div class="card"><div class="k">Grid-free days</div><div class="v" id="c-gridfree">—</div><div class="d">of 365 fully self-powered</div></div>
+      </div>
+
+      <div class="chartbox">
+        <div class="panel">
+          <h2>Daylight hours &amp; solar resource through the year</h2>
+          <canvas id="ch-daylight"></canvas>
+          <div class="legend">
+            <span><i class="swatch" style="background:#fbbf24"></i>Daylight hours</span>
+            <span><i class="swatch" style="background:#60a5fa"></i>Peak sun hours (right axis)</span>
+            <span><i class="swatch" style="background:#f87171"></i>Selected day</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="chartbox">
+        <div class="panel">
+          <h2>Today's hourly profile (one simulated weather day)</h2>
+          <canvas id="ch-hourly"></canvas>
+          <div class="legend">
+            <span><i class="swatch" style="background:#34d399"></i>Solar production</span>
+            <span><i class="swatch" style="background:#fbbf24"></i>Usage (dashed)</span>
+            <span><i class="swatch" style="background:rgba(251,191,36,.6)"></i>Midday surplus (exported/lost)</span>
+            <span><i class="swatch" style="background:rgba(248,113,113,.6)"></i>Dark-hour shortfall (bought)</span>
+            <span><i class="swatch" style="background:#60a5fa"></i>Battery state of charge (right)</span>
+            <span><i class="swatch" style="background:rgba(96,165,250,.14)"></i>Night</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="chartbox">
+        <div class="panel">
+          <h2>Monthly energy balance (one simulated weather year)</h2>
+          <canvas id="ch-balance"></canvas>
+          <div class="legend">
+            <span><i class="swatch" style="background:#34d399"></i>Solar production</span>
+            <span><i class="swatch" style="background:#fbbf24"></i>Usage (dashed)</span>
+            <span><i class="swatch" style="background:#60a5fa"></i>Battery discharge</span>
+            <span><i class="swatch" style="background:#f87171"></i>Grid import</span>
+            <span><i class="swatch" style="background:rgba(255,255,255,.16)"></i>Grid import if no battery</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="chartbox">
+        <div class="panel">
+          <h2>The peak point — array size vs. net annual value</h2>
+          <canvas id="ch-array"></canvas>
+          <div class="legend">
+            <span><i class="swatch" style="background:#34d399"></i>Net annual value ($/yr)</span>
+            <span><i class="swatch" style="background:#f87171"></i>Excess not used (export/waste, right)</span>
+            <span><i class="swatch" style="background:#fbbf24"></i>Peak value</span>
+            <span><i class="swatch" style="background:#60a5fa"></i>Your current size</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="chartbox">
+        <div class="panel">
+          <h2>Battery size — net value &amp; longest grid-dependent stretch</h2>
+          <canvas id="ch-battery"></canvas>
+          <div class="legend">
+            <span><i class="swatch" style="background:#34d399"></i>Net annual value ($/yr, left)</span>
+            <span><i class="swatch" style="background:#f87171"></i>Longest grid stretch (days, right)</span>
+            <span><i class="swatch" style="background:#fbbf24"></i>Peak value</span>
+            <span><i class="swatch" style="background:#60a5fa"></i>Your current battery</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Monthly detail (at your current size)</h2>
+        <table id="tbl"></table>
+      </div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <b>Model assumptions</b>
+    <ul>
+      <li><b>Daylight</b> is a standard solar-geometry formula for your latitude — accurate within minutes.</li>
+      <li><b>Average clouds</b> are baked into the monthly peak-sun-hour table (real Detroit-area insolation, south-facing, tilt ≈ latitude).</li>
+      <li><b>Daily clouds</b> are added on top: a seeded, autocorrelated weather model makes realistic runs of sunny/overcast days that average to the monthly table.</li>
+      <li><b>Hourly model</b>: each day's solar is spread over daylight hours with a cosine (noon-peak) curve; usage follows a residential load shape (evening peak). The battery charges midday surplus and discharges into evening/night load, 95% round-trip each way.</li>
+      <li><b>Peak→dark loss</b> = kWh of your own midday solar exported while you simultaneously imported during dark hours — energy storage was too small to shift from noon to night.</li>
+      <li><b>No grid storage / banking:</b> the grid never stores energy for you. With the net-metering toggle <b>On</b>, surplus is sold on the spot at the export credit; <b>Off</b> means draw-only and surplus is curtailed/wasted.</li>
+      <li><b>Output ceiling:</b> if you set a cap, hourly output is hard-limited there and the excess is lost (never produced) — modeling any limit such as an undersized MPPT charge controller or inverter.</li>
+      <li>Net value = bill savings − <i>annualized</i> system cost (5% discount, 25-yr life, after tax credit). Rates flat, no escalation or time-of-use.</li>
+    </ul>
+  </div>
+</div>
+
+<script>
+(function(){
+"use strict";
+const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const DAYS=[31,28,31,30,31,30,31,31,30,31,30,31];
+const PSH=[1.6,2.4,3.4,4.5,5.3,5.7,5.8,5.2,4.3,2.9,1.8,1.4]; // kWh/kW/day, south-facing, Detroit (average weather)
+const MID=[15,45,74,105,135,166,196,227,258,288,319,349];
+
+const state={day:183,lat:44,cloudVar:0.40,cloudRun:0.55,array:8,battery:13.5,derate:0.80,
+  usage:10000,darkShare:55,acBoost:25,retail:0.20,exportPct:20,netMetering:false,
+  costW:1.20,battCost:170,itc:0,discount:5,years:25,invLimit:0};
+
+const $=id=>document.getElementById(id);
+const fmt0=x=>Math.round(x).toLocaleString();
+const fmt1=x=>(+x).toLocaleString(undefined,{maximumFractionDigits:1});
+const money=x=>'$'+Math.round(x).toLocaleString();
+const pct=x=>Math.round(x)+'%';
+
+/* ---- geometry / season ---- */
+function daylengthHours(lat,n){
+  const dec=23.44*Math.sin(2*Math.PI*(284+n)/365)*Math.PI/180;
+  const latR=lat*Math.PI/180;
+  const cosH=Math.max(-1,Math.min(1,-Math.tan(latR)*Math.tan(dec)));
+  const H=Math.acos(cosH);
+  return 2*H*(180/Math.PI)/15;
+}
+function pshAtDay(n){
+  if(n<=MID[0])return PSH[0];
+  if(n>=MID[11])return PSH[11];
+  for(let i=0;i<11;i++){
+    if(n>=MID[i]&&n<=MID[i+1]){
+      const t=(n-MID[i])/(MID[i+1]-MID[i]);
+      return PSH[i]+(PSH[i+1]-PSH[i])*t;
+    }
+  }
+  return PSH[11];
+}
+function monthOfDay(n){let c=0;for(let i=0;i<12;i++){c+=DAYS[i];if(n<=c)return i;}return 11;}
+function dateLabel(n){const d=new Date(2023,0,n);return d.toLocaleDateString(undefined,{month:'short',day:'numeric'});}
+function fmtClock(h){let hh=Math.floor(h);let mm=Math.round((h-hh)*60);if(mm===60){hh++;mm=0;}
+  const ap=hh>=12?'PM':'AM';const hr=((hh+11)%12)+1;return hr+':'+String(mm).padStart(2,'0')+' '+ap;}
+
+function usageFrac(){
+  const f=Array(12).fill(1/12);
+  const b=state.acBoost/100;
+  f[5]*=1+b;f[6]*=1+b;f[7]*=1+b;
+  f[4]*=1+b*0.4;f[8]*=1+b*0.4;
+  const s=f.reduce((a,x)=>a+x,0);
+  return f.map(x=>x/s);
+}
+function annuity(){const r=state.discount/100;return r/(1-Math.pow(1+r,-state.years));}
+function totalCost(a,b){return (a*1000*state.costW + b*state.battCost)*(1-state.itc/100);}
+
+/* ---- daily weather (seeded, autocorrelated clouds) ---- */
+function mulberry32(seed){return function(){seed|=0;seed=seed+0x6D2B79F5|0;
+  let t=Math.imul(seed^seed>>>15,1|seed);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+function makeWeather(){
+  const rnd=mulberry32(0x5A17C0DE);
+  const sig=state.cloudVar, rho=state.cloudRun;
+  const m=new Array(365);
+  m[0]=1;
+  for(let d=1;d<365;d++){
+    const u1=Math.max(rnd(),1e-9), u2=rnd();
+    const z=Math.sqrt(-2*Math.log(u1))*Math.cos(2*Math.PI*u2);
+    m[d]=1 + rho*(m[d-1]-1) + sig*Math.sqrt(1-rho*rho)*z;
+    m[d]=Math.max(0.08,Math.min(1.6,m[d]));
+  }
+  return m;
+}
+
+/* ---- hourly shapes ---- */
+function solarWeightsFromDL(dl){
+  const sunrise=12-dl/2, sunset=12+dl/2;
+  const w=new Array(24).fill(0);
+  let sum=0;
+  for(let h=0;h<24;h++){
+    const t=h+0.5;
+    if(t>sunrise && t<sunset){
+      w[h]=Math.cos(Math.PI*(t-12)/dl);
+      if(w[h]<0)w[h]=0;
+    }
+    sum+=w[h];
+  }
+  if(sum>0)for(let h=0;h<24;h++)w[h]/=sum;
+  return w;
+}
+function loadShape(){
+  const day=[0.5,0.45,0.42,0.42,0.45,0.6,0.85,1.0,1.05,1.0,0.9,0.85,0.8,0.8,0.85,0.9,1.05,1.3,1.5,1.6,1.45,1.2,0.85,0.6];
+  const night=[0.35,0.3,0.28,0.28,0.3,0.5,0.7,0.6,0.55,0.5,0.45,0.4,0.4,0.45,0.55,0.7,0.9,1.2,1.5,1.7,1.6,1.4,1.0,0.6];
+  const k=state.darkShare/100;
+  const w=day.map((d,i)=>d*(1-k)+night[i]*k);
+  const s=w.reduce((a,x)=>a+x,0);
+  return w.map(x=>x/s);
+}
+
+/* ---- module-level caches (set each recalc) ---- */
+let weather=[], ufArr=[], dlByDay=[], swAll=[], darkMask=[], lsArr=[];
+
+/* ---- hourly simulation ---- */
+function simHourly(arrayK,battK,traceDay){
+  const cap=battK*0.9;
+  let soc=0;
+  let produced=0,offset=0,exported=0,imported=0,cycled=0,peakDarkLoss=0;
+  let gridDays=0,maxGridRun=0,curRun=0,shortSum=0,shortCnt=0;
+  const monthly=Array.from({length:12},()=>({prod:0,use:0,imp:0,exp:0,bat:0}));
+  let trace=null;
+  if(traceDay!==null&&traceDay>=0) trace={prod:new Array(24).fill(0),load:new Array(24).fill(0),soc:new Array(24).fill(0)};
+  for(let d=0;d<365;d++){
+    const m=monthOfDay(d+1);
+    const G=arrayK*PSH[m]*weather[d]*state.derate;
+    const dailyLoad=state.usage*ufArr[m]/DAYS[m];
+    const sw=swAll[d], mask=darkMask[d];
+    let dayExport=0, dayImportDark=0, dayImport=0;
+    const rec=trace && d===traceDay;
+    for(let h=0;h<24;h++){
+      const g0=G*sw[h];
+      const g=(state.invLimit>0 && g0>state.invLimit)?state.invLimit:g0;
+      const l=dailyLoad*lsArr[h];
+      produced+=g;monthly[m].prod+=g;monthly[m].use+=l;
+      let expH=0,impH=0;
+      if(g>=l){
+        offset+=l;
+        const surplus=g-l;
+        const store=Math.min(surplus,(cap-soc)/0.95);
+        soc+=store*0.95;cycled+=store;
+        expH=surplus-store;exported+=expH;monthly[m].exp+=expH;dayExport+=expH;
+      }else{
+        offset+=g;
+        const deficit=l-g;
+        const disc=Math.min(deficit,soc*0.95);
+        soc-=disc/0.95;offset+=disc;cycled+=disc;monthly[m].bat+=disc;
+        impH=deficit-disc;imported+=impH;monthly[m].imp+=impH;dayImport+=impH;
+        if(impH>0 && mask[h]) dayImportDark+=impH;
+      }
+      if(rec){trace.prod[h]=g;trace.load[h]=l;trace.soc[h]=soc;}
+    }
+    peakDarkLoss+=Math.min(dayExport,dayImportDark);
+    const dailyShort=Math.max(0,dailyLoad-G);
+    shortSum+=dailyShort;
+    if(dailyLoad>G)shortCnt++;
+    if(dayImport>0.0001){gridDays++;curRun++;if(curRun>maxGridRun)maxGridRun=curRun;}else curRun=0;
+  }
+  return {produced,offset,exported,imported,cycled,gridDays,maxGridRun,monthly,shortSum,shortCnt,peakDarkLoss,trace};
+}
+function exportFrac(){return state.netMetering?state.exportPct/100:0;}
+function savingsOf(arrayK,battK){
+  const s=simHourly(arrayK,battK,null);
+  const val=s.offset*state.retail + s.exported*state.retail*exportFrac();
+  return {s,val};
+}
+function smooth3(a){const o=a.slice();for(let i=1;i<a.length-1;i++)o[i]=(a[i-1]+a[i]+a[i+1])/3;return o;}
+
+/* ---------- canvas helpers ---------- */
+function setupCanvas(cv){
+  const dpr=window.devicePixelRatio||1;
+  const w=cv.clientWidth||cv.parentElement.clientWidth||600;
+  const h=cv.clientHeight||230;
+  cv.width=Math.round(w*dpr);cv.height=Math.round(h*dpr);
+  const ctx=cv.getContext('2d');
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  return {ctx,w,h};
+}
+function rangeOf(vals){
+  let mn=Math.min.apply(null,vals),mx=Math.max.apply(null,vals);
+  if(!isFinite(mn)||!isFinite(mx)){mn=0;mx=1;}
+  if(mn===mx){mn-=1;mx+=1;}
+  const pad=(mx-mn)*0.08;
+  return {min:mn-pad,max:mx+pad};
+}
+function niceTicks(min,max,count){
+  const span=max-min||1;
+  const step0=span/count;
+  const mag=Math.pow(10,Math.floor(Math.log10(step0)));
+  const norm=step0/mag;
+  let step;if(norm<1.5)step=1;else if(norm<3)step=2;else if(norm<7)step=5;else step=10;
+  step*=mag;
+  const start=Math.ceil(min/step)*step;
+  const end=Math.floor(max/step)*step;
+  const ticks=[];
+  for(let v=start;v<=end+step*1e-6;v+=step)ticks.push(v);
+  return {min:Math.min(start,min),max:Math.max(end,max),step,ticks};
+}
+function drawLineChart(cv,cfg){
+  const {ctx,w,h}=setupCanvas(cv);
+  ctx.clearRect(0,0,w,h);
+  const hasR=cfg.series.some(s=>s.axis==='R');
+  const padL=50,padR=hasR?50:12,padT=12,padB=22;
+  const pw=w-padL-padR,ph=h-padT-padB;
+  const N=cfg.xs.length;
+  const xAt=i=>padL+(N===1?pw/2:pw*i/(N-1));
+  const Lv=[],Rv=[];
+  cfg.series.forEach(s=>{const tgt=s.axis==='R'?Rv:Lv;tgt.push.apply(tgt,s.data);});
+  (cfg.markers||[]).forEach(mk=>{(mk.axis==='R'?Rv:Lv).push(mk.y);});
+  const rL=rangeOf(Lv);
+  const rR=hasR?rangeOf(Rv):null;
+  const yL=v=>padT+ph-(v-rL.min)/(rL.max-rL.min)*ph;
+  const yR=v=>rR?padT+ph-(v-rR.min)/(rR.max-rR.min)*ph:0;
+  ctx.font='10px system-ui,sans-serif';
+  niceTicks(rL.min,rL.max,5).ticks.forEach(v=>{
+    const y=yL(v);
+    ctx.strokeStyle='rgba(255,255,255,0.06)';ctx.beginPath();ctx.moveTo(padL,y);ctx.lineTo(w-padR,y);ctx.stroke();
+    ctx.fillStyle='#8a93a8';ctx.textAlign='right';ctx.fillText(cfg.fmtL?cfg.fmtL(v):String(v),padL-5,y+3);
+  });
+  if(hasR){
+    ctx.textAlign='left';
+    niceTicks(rR.min,rR.max,5).ticks.forEach(v=>{
+      const y=yR(v);ctx.fillStyle='#8a93a8';ctx.fillText(cfg.fmtR?cfg.fmtR(v):String(v),w-padR+5,y+3);
+    });
+  }
+  (cfg.xTickIndices||[]).forEach(i=>{
+    ctx.fillStyle='#8a93a8';ctx.textAlign='center';ctx.fillText(cfg.xLabels[i],xAt(i),h-6);
+  });
+  cfg.series.forEach(s=>{
+    const yf=s.axis==='R'?yR:yL;
+    ctx.strokeStyle=s.color;ctx.lineWidth=2;ctx.setLineDash(s.dash||[]);
+    ctx.beginPath();
+    for(let i=0;i<N;i++){const x=xAt(i),y=yf(s.data[i]);if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);}
+    ctx.stroke();ctx.setLineDash([]);
+    if(s.fill){
+      const base=yL(rL.min);
+      ctx.lineTo(xAt(N-1),base);ctx.lineTo(xAt(0),base);ctx.closePath();
+      const g=ctx.createLinearGradient(0,padT,0,h-padB);
+      g.addColorStop(0,s.color+'44');g.addColorStop(1,s.color+'00');
+      ctx.fillStyle=g;ctx.fill();
+    }
+  });
+  (cfg.markers||[]).forEach(mk=>{
+    const x=xAt(mk.x),y=mk.axis==='R'?yR(mk.y):yL(mk.y);
+    ctx.fillStyle=mk.color||'#fbbf24';ctx.beginPath();ctx.arc(x,y,5,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#0f1420';ctx.lineWidth=2;ctx.stroke();
+    ctx.fillStyle=mk.color||'#fbbf24';ctx.font='700 11px system-ui,sans-serif';ctx.textAlign='center';
+    ctx.fillText(mk.label,x,y-9);
+  });
+}
+function drawBalanceChart(cv,monthly){
+  const {ctx,w,h}=setupCanvas(cv);
+  ctx.clearRect(0,0,w,h);
+  const padL=50,padR=12,padT=12,padB=22;
+  const pw=w-padL-padR,ph=h-padT-padB;
+  let maxAbs=1;
+  monthly.forEach(m=>maxAbs=Math.max(maxAbs,m.prod,m.use,m.imp+m.bat));
+  const r={min:-maxAbs*1.15,max:maxAbs*1.15};
+  const y=v=>padT+ph-(v-r.min)/(r.max-r.min)*ph;
+  const bw=pw/12*0.62;
+  ctx.font='10px system-ui,sans-serif';
+  niceTicks(r.min,r.max,6).ticks.forEach(v=>{
+    const yy=y(v);
+    ctx.strokeStyle=Math.abs(v)<1e-9?'rgba(255,255,255,0.18)':'rgba(255,255,255,0.06)';
+    ctx.beginPath();ctx.moveTo(padL,yy);ctx.lineTo(w-padR,yy);ctx.stroke();
+    ctx.fillStyle='#8a93a8';ctx.textAlign='right';ctx.fillText(Math.round(v).toLocaleString(),padL-5,yy+3);
+  });
+  for(let m=0;m<12;m++){
+    const cx=padL+pw/12*m+pw/24;
+    const x0=cx-bw/2,d=monthly[m];
+    const ghost=Math.max(0,d.use-d.prod);
+    if(ghost>0){ctx.fillStyle='rgba(255,255,255,0.07)';ctx.fillRect(x0,y(0),bw,y(-ghost)-y(0));}
+    if(d.bat>0){ctx.fillStyle='#60a5fa';ctx.fillRect(x0,y(0),bw,y(-d.bat)-y(0));}
+    if(d.imp>0){ctx.fillStyle='#f87171';ctx.fillRect(x0,y(-d.bat),bw,y(-(d.bat+d.imp))-y(-d.bat));}
+    if(d.prod>0){ctx.fillStyle='#34d399';ctx.fillRect(x0,y(d.prod),bw,y(0)-y(d.prod));}
+    ctx.fillStyle='#8a93a8';ctx.textAlign='center';ctx.fillText(MONTHS[m],cx,h-6);
+  }
+  ctx.strokeStyle='#fbbf24';ctx.lineWidth=2;ctx.setLineDash([4,3]);
+  ctx.beginPath();
+  for(let m=0;m<12;m++){
+    const cx=padL+pw/12*m+pw/24,yy=y(monthly[m].use);
+    if(m===0)ctx.moveTo(cx,yy);else ctx.lineTo(cx,yy);
+  }
+  ctx.stroke();ctx.setLineDash([]);
+}
+function drawHourlyChart(cv,trace){
+  const {ctx,w,h}=setupCanvas(cv);
+  ctx.clearRect(0,0,w,h);
+  const padL=50,padR=44,padT=12,padB=22;
+  const pw=w-padL-padR,ph=h-padT-padB;
+  const dl=dlByDay[state.day-1];
+  const sunrise=12-dl/2, sunset=12+dl/2;
+  let maxK=0.001;
+  for(let i=0;i<24;i++)maxK=Math.max(maxK,trace.prod[i],trace.load[i]);
+  const rL={min:0,max:maxK*1.15};
+  const cap=state.battery*0.9;
+  const rR={min:0,max:Math.max(1,cap*1.1)};
+  const yL=v=>padT+ph-(v-rL.min)/(rL.max-rL.min)*ph;
+  const yR=v=>padT+ph-(v-rR.min)/(rR.max-rR.min)*ph;
+  const xAt=h=>padL+pw*h/23;
+  const bw=pw/23;
+  // night bands
+  ctx.fillStyle='rgba(96,165,250,0.07)';
+  for(let h=0;h<24;h++){const t=h+0.5;if(t<=sunrise||t>=sunset){ctx.fillRect(xAt(h)-bw/2,padT,bw,ph);}}
+  ctx.font='10px system-ui,sans-serif';
+  // left ticks
+  niceTicks(rL.min,rL.max,4).ticks.forEach(v=>{
+    const y=yL(v);
+    ctx.strokeStyle='rgba(255,255,255,0.06)';ctx.beginPath();ctx.moveTo(padL,y);ctx.lineTo(w-padR,y);ctx.stroke();
+    ctx.fillStyle='#8a93a8';ctx.textAlign='right';ctx.fillText(v.toFixed(1),padL-5,y+3);
+  });
+  // right ticks (SOC)
+  ctx.textAlign='left';
+  niceTicks(rR.min,rR.max,4).ticks.forEach(v=>{
+    const y=yR(v);ctx.fillStyle='#8a93a8';ctx.fillText(Math.round(v),w-padR+5,y+3);
+  });
+  [0,6,12,18].forEach(h=>{ctx.fillStyle='#8a93a8';ctx.textAlign='center';ctx.fillText(h+':00',xAt(h),h-6);});
+  // bars
+  for(let h=0;h<24;h++){
+    const x=xAt(h)-bw/2;
+    const p=trace.prod[h],l=trace.load[h];
+    if(p>0){ctx.fillStyle='#34d399';ctx.fillRect(x,yL(p),bw,yL(0)-yL(p));}
+    if(p>l){ctx.fillStyle='rgba(251,191,36,0.55)';ctx.fillRect(x,yL(p),bw,yL(l)-yL(p));}
+    else if(l>p){ctx.fillStyle='rgba(248,113,113,0.55)';ctx.fillRect(x,yL(l),bw,yL(p)-yL(l));}
+  }
+  // load line
+  ctx.strokeStyle='#fbbf24';ctx.lineWidth=2;ctx.setLineDash([4,3]);
+  ctx.beginPath();
+  for(let h=0;h<24;h++){const x=xAt(h),y=yL(trace.load[h]);if(h===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);}
+  ctx.stroke();ctx.setLineDash([]);
+  // SOC line
+  if(state.battery>0){
+    ctx.strokeStyle='#60a5fa';ctx.lineWidth=2;
+    ctx.beginPath();
+    for(let h=0;h<24;h++){const x=xAt(h),y=yR(trace.soc[h]);if(h===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);}
+    ctx.stroke();
+  }
+}
+
+/* ---------- rendering ---------- */
+function recalc(){
+  ufArr=usageFrac();
+  weather=makeWeather();
+  lsArr=loadShape();
+  dlByDay=[];swAll=[];darkMask=[];
+  for(let n=1;n<=365;n++){
+    const dl=daylengthHours(state.lat,n);
+    dlByDay.push(dl);
+    swAll.push(solarWeightsFromDL(dl));
+    const sunrise=12-dl/2,sunset=12+dl/2;
+    const mask=new Array(24);
+    for(let h=0;h<24;h++){const t=h+0.5;mask[h]=(t<=sunrise||t>=sunset);}
+    darkMask.push(mask);
+  }
+
+  const s=simHourly(state.array,state.battery,state.day-1);
+  const trace=s.trace;
+  const val=s.offset*state.retail + s.exported*state.retail*exportFrac();
+  const cost=totalCost(state.array,state.battery);
+  const af=annuity();
+  const payback=val>0?cost/val:Infinity;
+  const roi20=cost>0?(val*20-cost)/cost*100:0;
+  const offPct=state.usage>0?s.offset/state.usage*100:0;
+  const selfPct=s.produced>0?(s.produced-s.exported)/s.produced*100:0;
+  const expVal=s.exported*state.retail*exportFrac();
+  const usableCap=state.battery*0.9;
+  const avgShort=s.shortCnt>0?s.shortSum/s.shortCnt:0;
+  const autonomyDays=avgShort>0?usableCap/avgShort:Infinity;
+  const battFor3=avgShort>0?3*avgShort/0.9:0;
+  const pdklPct=s.produced>0?s.peakDarkLoss/s.produced*100:0;
+
+  const dl=daylengthHours(state.lat,state.day);
+  const psh=pshAtDay(state.day);
+  const prodToday=trace?trace.prod.reduce((a,b)=>a+b,0):0;
+
+  $('c-day').textContent=dl.toFixed(1)+' hrs';
+  $('c-sun').textContent=fmtClock(12-dl/2)+' – '+fmtClock(12+dl/2)+' (solar time)';
+  $('c-psh').textContent=psh.toFixed(1)+' hrs';
+  $('c-prodtoday').textContent=fmt1(prodToday)+' kWh';
+  $('c-payback').textContent=payback===Infinity?'>50 yr':(payback>50?'>50 yr':payback.toFixed(1)+' yr');
+  $('c-roi').textContent=(roi20>=0?'':'−')+Math.abs(roi20).toFixed(0)+'%';
+  $('c-savings').textContent='saves '+money(val)+'/yr';
+  $('c-offset').textContent=pct(offPct);
+  $('c-selfuse').textContent=pct(selfPct);
+  $('c-export').textContent=fmt0(s.exported)+' kWh';
+  $('c-export-label').textContent=state.netMetering?'Excess exported':'Excess wasted';
+  $('c-exportval').textContent=state.netMetering?('worth '+money(expVal)+'/yr'):'curtailed/wasted — never returned to grid';
+  $('c-pdkloss').textContent=fmt0(s.peakDarkLoss)+' kWh';
+  $('c-pdkloss-sub').textContent=pct(pdklPct)+' of production re-bought at night';
+  $('c-autonomy').textContent=autonomyDays===Infinity?'∞ days':(autonomyDays>30?'>30 days':autonomyDays.toFixed(1)+' days');
+  $('c-autonomy-sub').textContent='3-day overcast stretch ≈ '+(avgShort>0?fmt0(battFor3):'0')+' kWh';
+  $('c-gridrun').textContent=s.maxGridRun+' days';
+  $('c-gridfree').textContent=(365-s.gridDays)+' / 365';
+
+  /* ---- array sweep ---- */
+  const xs=[],netRaw=[],expPcts=[];
+  const ARR_MAX=parseFloat($('s-array').max), ARR_STEP=0.5;
+  for(let a=0;a<=ARR_MAX+1e-9;a+=ARR_STEP){
+    xs.push(a);
+    const {s:ss,val:vv}=savingsOf(a,state.battery);
+    netRaw.push(vv - totalCost(a,state.battery)*af);
+    expPcts.push(ss.produced>0?ss.exported/ss.produced*100:0);
+  }
+  const netVals=smooth3(netRaw);
+  let pkIdx=0;for(let i=1;i<netVals.length;i++)if(netVals[i]>netVals[pkIdx])pkIdx=i;
+  const peakKw=xs[pkIdx],peakNet=netVals[pkIdx];
+  const peakAt=simHourly(peakKw,state.battery,null);
+  const peakOff=peakAt.offset/state.usage*100;
+  const peakExp=peakAt.produced>0?peakAt.exported/peakAt.produced*100:0;
+  const curIdx=state.array/ARR_STEP;
+  const arrTickIdx=[];for(let v=0;v<=ARR_MAX;v+=10)arrTickIdx.push(Math.round(v/ARR_STEP));
+  const arrTickLbl=arrTickIdx.map(i=>String(xs[i]));
+
+  $('c-peak').textContent='≈ '+peakKw.toFixed(1)+' kW';
+  $('c-peaknet').textContent=money(peakNet)+'/yr net';
+  let callout='Sweet spot ≈ <b>'+peakKw.toFixed(1)+' kW</b> ('+money(peakNet)+'/yr net value). '+
+    'There it offsets <b>'+pct(peakOff)+'</b> of your '+fmt0(state.usage)+' kWh usage and exports <b>'+pct(peakExp)+
+    '</b> of what it makes. ';
+  if(pkIdx===0){
+    callout+='At these cost/rate settings <b>no array size breaks even</b> — net value is negative across the whole range.';
+  } else if(pkIdx===xs.length-1){
+    callout+='(Optimum is at the '+ARR_MAX+' kW ceiling — your usage outruns what the slider can cover.) ';
+  }
+  if(!state.netMetering){
+    callout+='<b>Net metering is off</b> — surplus is curtailed/wasted and never returned to the grid, so every unused kWh is worth $0. Oversizing is pure waste.';
+  } else if(state.exportPct>=90){
+    callout+='<b>Why usage doesn\'t move this:</b> at ~100% export credit the grid acts as a free battery, so your summer surplus is worth full retail and the optimum depends on cost vs. credit value — not your usage. Lower the credit to see the usage-based peak.';
+  } else if(state.exportPct<50){
+    callout+='At a 5:1 buy/sell ratio ($0.20 vs $0.04), every exported kWh is worth only 1/5 of a self-consumed kWh — so oversizing mostly creates near-worthless summer surplus. Bigger is not better.';
+  } else {
+    callout+='With export credit below retail, surplus is worth less than self-consumed power, so oversizing slowly stops paying off.';
+  }
+  const netAt=(a,b)=>savingsOf(a,b).val - totalCost(a,b)*af;
+  const mvArr=netAt(state.array+1,state.battery)-netAt(state.array,state.battery);
+  const mvBat=netAt(state.array,state.battery+1)-netAt(state.array,state.battery);
+  const costKW=1000*state.costW;
+  const vArr=(1000/costKW)*mvArr;
+  const vBat=(1000/state.battCost)*mvBat;
+  if(vArr<=0 && vBat<=0){
+    callout+=' <b>Next $1,000:</b> you are at/past the optimum — neither more panels nor more battery adds net value at these rates.';
+  } else if(vArr>vBat){
+    callout+=' <b>Next $1,000:</b> ~'+(1000/costKW).toFixed(2)+' kW more panels adds ~$'+Math.round(vArr)+'/yr, beating ~'+(1000/state.battCost).toFixed(1)+' kWh more battery (~$'+Math.round(vBat)+'/yr). Panels are the better buy right now.';
+  } else {
+    callout+=' <b>Next $1,000:</b> ~'+(1000/state.battCost).toFixed(1)+' kWh more battery adds ~$'+Math.round(vBat)+'/yr, beating ~'+(1000/costKW).toFixed(2)+' kW more panels (~$'+Math.round(vArr)+'/yr). Storage is the better buy right now.';
+  }
+  $('peak-callout').innerHTML=callout;
+
+  /* ---- battery sweep ---- */
+  const bx=[],bRaw=[],bStretch=[];
+  const BAT_MAX=parseFloat($('s-battery').max), BAT_STEP=1;
+  for(let b=0;b<=BAT_MAX+1e-9;b+=BAT_STEP){
+    bx.push(b);
+    const {s:bs,val:bv}=savingsOf(state.array,b);
+    bRaw.push(bv - totalCost(state.array,b)*af);
+    bStretch.push(bs.maxGridRun);
+  }
+  const bvals=smooth3(bRaw);
+  let bkIdx=0;for(let i=1;i<bvals.length;i++)if(bvals[i]>bvals[bkIdx])bkIdx=i;
+  const bCurIdx=state.battery;
+  const batTickIdx=[];for(let v=0;v<=BAT_MAX;v+=20)batTickIdx.push(Math.round(v/BAT_STEP));
+  const batTickLbl=batTickIdx.map(i=>String(bx[i]));
+
+  /* ---- charts ---- */
+  const dTickIdx=[],dLabels=[],dData=[],pData=[];
+  for(let n=1;n<=365;n++){
+    dData.push(daylengthHours(state.lat,n));
+    pData.push(pshAtDay(n));
+    if(n===1||n%30===0||n===365){dTickIdx.push(n-1);dLabels.push(dateLabel(n));}
+  }
+  drawLineChart($('ch-daylight'),{
+    xs:Array.from({length:365},(_,i)=>i),
+    series:[
+      {data:dData,color:'#fbbf24',fill:true,label:'Daylight'},
+      {data:pData,color:'#60a5fa',dash:[4,3],axis:'R',label:'PSH'}
+    ],
+    xTickIndices:dTickIdx,xLabels:dLabels,fmtL:v=>v.toFixed(0)+'h',fmtR:v=>v.toFixed(1),
+    markers:[{x:state.day-1,y:dl,color:'#f87171',label:'Today'}]
+  });
+
+  drawHourlyChart($('ch-hourly'),trace);
+
+  drawBalanceChart($('ch-balance'),s.monthly);
+
+  drawLineChart($('ch-array'),{
+    xs,
+    series:[
+      {data:netVals,color:'#34d399',fill:true,label:'Net value'},
+      {data:expPcts,color:'#f87171',dash:[4,3],axis:'R',label:'Excess %'}
+    ],
+    xTickIndices:arrTickIdx,xLabels:arrTickLbl,
+    fmtL:v=>'$'+Math.round(v),fmtR:v=>v.toFixed(0)+'%',
+    markers:[
+      {x:pkIdx,y:peakNet,color:'#fbbf24',label:'Peak '+peakKw.toFixed(1)+' kW'},
+      {x:curIdx,y:netVals[Math.round(curIdx)],color:'#60a5fa',label:'Now '+state.array.toFixed(1)+' kW'}
+    ]
+  });
+
+  drawLineChart($('ch-battery'),{
+    xs:bx,
+    series:[
+      {data:bvals,color:'#34d399',fill:true,label:'Net value'},
+      {data:bStretch,color:'#f87171',dash:[4,3],axis:'R',label:'Grid stretch (days)'}
+    ],
+    xTickIndices:batTickIdx,xLabels:batTickLbl,
+    fmtL:v=>'$'+Math.round(v),fmtR:v=>v.toFixed(0)+'d',
+    markers:[
+      {x:bkIdx,y:bvals[bkIdx],color:'#fbbf24',label:'Peak '+bx[bkIdx]+' kWh'},
+      {x:bCurIdx,y:bvals[Math.round(bCurIdx)],color:'#60a5fa',label:'Now '+state.battery+' kWh'}
+    ]
+  });
+
+  /* ---- table ---- */
+  const tb=$('tbl');
+  let html='<tr><th>Month</th><th>Production</th><th>Usage</th><th>Export</th><th>Battery</th><th>Grid</th><th>Net</th></tr>';
+  s.monthly.forEach((m,i)=>{
+    const netv=m.prod-m.use;
+    html+='<tr><td>'+MONTHS[i]+'</td><td>'+fmt0(m.prod)+'</td><td>'+fmt0(m.use)+'</td>'+
+      '<td>'+(m.exp>0?'+'+fmt0(m.exp):'0')+'</td>'+
+      '<td class="blue">'+fmt0(m.bat)+'</td>'+
+      '<td class="red">'+fmt0(m.imp)+'</td>'+
+      '<td class="'+(netv>=0?'pos':'neg')+'">'+(netv>=0?'+':'')+fmt0(netv)+'</td></tr>';
+  });
+  html+='<tr><td><b>Year</b></td><td><b>'+fmt0(s.produced)+'</b></td><td><b>'+fmt0(state.usage)+
+    '</b></td><td><b>+'+fmt0(s.exported)+'</b></td><td><b>'+fmt0(s.cycled)+'</b></td><td><b>'+fmt0(s.imported)+
+    '</b></td><td><b>'+(s.produced-state.usage>=0?'+':'')+fmt0(s.produced-state.usage)+'</b></td></tr>';
+  tb.innerHTML=html;
+}
+
+/* ---------- sliders ---------- */
+function bind(id,key,fmt){
+  const el=$(id);
+  function upd(){
+    state[key]=parseFloat(el.value);
+    $(id+'-val').textContent=fmt?fmt(parseFloat(el.value)):el.value;
+    recalc();
+  }
+  el.addEventListener('input',upd);
+  upd();
+}
+function bindAll(){
+  bind('s-day','day',v=>dateLabel(Math.round(v)));
+  bind('s-lat','lat',v=>v.toFixed(1)+'°');
+  bind('s-cloudvar','cloudVar',v=>v.toFixed(2));
+  bind('s-cloudrun','cloudRun',v=>v.toFixed(2));
+  bind('s-array','array',v=>v.toFixed(1)+' kW');
+  bind('s-battery','battery',v=>v.toFixed(1)+' kWh');
+  bind('s-derate','derate',v=>v.toFixed(2));
+  bind('s-invlimit','invLimit',v=>v===0?'none':v.toFixed(1)+' kW');
+  bind('s-usage','usage',v=>fmt0(v)+' kWh');
+  bind('s-dark','darkShare',v=>v.toFixed(0)+'%');
+  bind('s-ac','acBoost',v=>v.toFixed(0)+'%');
+  bind('s-retail','retail',v=>'$'+v.toFixed(3));
+  bind('s-export','exportPct',v=>v.toFixed(0)+'%');
+  bind('s-cost','costW',v=>'$'+v.toFixed(2));
+  bind('s-battcost','battCost',v=>'$'+fmt0(v));
+  bind('s-itc','itc',v=>v.toFixed(0)+'%');
+}
+function bindToggle(){
+  const el=$('s-net');
+  function upd(){
+    state.netMetering=el.checked;
+    $('s-net-val').textContent=el.checked?'On':'Off';
+    $('s-export').disabled=!el.checked;
+    recalc();
+  }
+  el.addEventListener('change',upd);
+  upd();
+}
+$('reset').addEventListener('click',function(){
+  $('s-day').value=183;$('s-lat').value=44;$('s-cloudvar').value=0.40;$('s-cloudrun').value=0.55;
+  $('s-array').value=8;$('s-battery').value=13.5;$('s-derate').value=0.80;$('s-invlimit').value=0;$('s-usage').value=10000;
+  $('s-dark').value=55;$('s-ac').value=25;$('s-retail').value=0.20;$('s-export').value=20;
+  $('s-cost').value=1.20;$('s-battcost').value=170;$('s-itc').value=0;
+  $('s-net').checked=false;$('s-net').dispatchEvent(new Event('change'));
+  ['s-day','s-lat','s-cloudvar','s-cloudrun','s-array','s-battery','s-derate','s-invlimit','s-usage','s-dark','s-ac','s-retail','s-export','s-cost','s-battcost','s-itc']
+    .forEach(id=>$(id).dispatchEvent(new Event('input')));
+});
+
+bindAll();
+bindToggle();
+window.addEventListener('resize',function(){recalc();});
+})();
+</script>
+</body>
+</html>
