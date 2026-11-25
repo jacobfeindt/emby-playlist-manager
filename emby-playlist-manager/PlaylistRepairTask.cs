@@ -68,7 +68,7 @@ namespace EmbyPlaylistManager
 
         private async Task ExecuteCore(Plugin plugin, CancellationToken cancellationToken, IProgress<double> progress)
         {
-            var options = plugin.OptionsStore.GetOptions();
+            var options = plugin.ShadowStore.GetOptions();
             if (!options.EnableShadow)
             {
                 _logger.Info("PlaylistRepairTask: Shadow system is disabled. Skipping.");

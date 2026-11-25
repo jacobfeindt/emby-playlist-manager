@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    Dependency-free test runner (no NuGet restore needed) for the plugin's pure sorting code.
+    Dependency-free test runner (no NuGet restore needed) for the plugin's pure sorting and conversion code.
     It compiles the plugin's Sorting/*.cs directly, with LangVersion 8.0 to match the plugin so any newer syntax
     sneaking into those files fails here. Run:  dotnet run -c Release
     Kept outside emby-playlist-manager/ so the plugin's default globbing never compiles it into the shipped DLL.
@@ -16,6 +16,7 @@
 
   <ItemGroup>
     <Compile Include="..\..\emby-playlist-manager\Sorting\*.cs" Link="Sorting\%(Filename)%(Extension)" />
+    <Compile Include="..\..\emby-playlist-manager\Conversion\*.cs" Link="Conversion\%(Filename)%(Extension)" />
   </ItemGroup>
 
 </Project>

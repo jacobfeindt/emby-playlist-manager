@@ -413,6 +413,19 @@ Full design, Emby API facts and the live-server checklist are in [`sort_playlist
 
 ---
 
+### Phase 9 — Convert a Playlist to a Collection ✅ Code complete (not yet verified on a live server)
+
+Full design, Emby API facts and the live-server checklist are in [`convert_to_collection.md`](convert_to_collection.md).
+
+- [x] `Conversion/ConversionPlanner.cs` — pure helpers (distinct ids, missing ids, batches, name fallback), unit-tested
+- [x] `PlaylistConvertService` — `BuildPlan`, `BuildPreviewRows`, `Apply` (create empty, add in batches of 100, retry a refused batch item by item, read back and report refused items)
+- [x] UI section: playlist dropdown, collection name, Preview Conversion, Create Collection, preview list, status
+- [x] The playlist is never changed; an existing collection with the same name only receives the missing items
+- [ ] Live-server verification (7 items in `convert_to_collection.md`)
+- [ ] Remove items no longer in the playlist, collection display order, and scheduled sync
+
+---
+
 ### Known Bug — File Picker Navigation (Item 3)
 
 When `ImportFilePath` has a saved value, the `[EditFilePicker]` control pre-populates with the full path including filename. Navigating to a different file requires manually clearing the filename portion before the folder browser will show directory contents. This is a GenericEdit framework behavior — no direct fix available without a custom editor.

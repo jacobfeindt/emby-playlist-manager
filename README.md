@@ -41,6 +41,26 @@ An Emby Server plugin for managing playlists — export, import, and automatic r
 - Safe by design: refuses if the playlist changed since the preview, verifies the real order while it works, saves a backup of the previous order (last 10 per playlist, under `PlaylistManager/sort-backups`), and writes the shadow file once at the end
 - Only one long-running operation (import, repair, scan, sort, scheduled repair) runs at a time
 
+### Convert a Playlist to a Collection
+- A playlist only offers Play. A collection has its own page with artwork, details and cast, so this turns a playlist into a collection **item by item** (it does not put the playlist inside a collection)
+- **Preview first**: shows the item types, how many items will be added, and the first 100 of them. Nothing changes until you click **Create Collection**
+- The playlist is never changed. Repeated rows count once, because a collection is a set with no order of its own
+- If a collection with that name already exists, only the missing items are added to it and nothing is removed, so running it again after the playlist grows is safe
+- After adding, the collection is read back and any item Emby refused is listed by name and type
+- Every collection the plugin creates or fills is tagged `playlist-theme`, so a themed list can be told apart from a movie-series box set
+
+### Themes
+- Organize collections into **named themes** — a theme is a tag applied to a collection, so themed lists (e.g. "Christmas", "Sci-Fi") can be told apart from movie-series box sets
+- Manage theme names (add/remove as many as you like) and assign existing collections to a theme, or remove them
+- The **Assign Collections** list shows user-created collections by default; tick **Include box sets** to also see auto-created movie-series collections
+- Emby's box-set libraries cannot be filtered, so the tag is the reliable grouping mechanism rather than a separate virtual library
+
+### Themes on the Home Screen
+- **Shuffle Themes on Home** pins a random selection of your theme collections as Netflix-style rows on the home screen (each row scrolls horizontally)
+- Configure the **number of theme rows** (default 8), and optionally **include box sets** in the shuffle pool
+- **Randomize item order** (on by default) shows each collection's items in a random order, so the first visible items change every time
+- **Shuffle when a user connects** re-shuffles automatically whenever a user or device signs in, so each user gets their own fresh random set
+
 ### General
 - Native Emby plugin UI with folder/file pickers, action buttons, and live status feedback
 - HTTP API endpoints for automation and scripting
@@ -86,11 +106,13 @@ This works because shadow files store provider IDs (IMDb, TMDb, TVDb), not file 
 EmbyPlaylistManager/
 ├── EmbyPlaylistManager.csproj
 ├── Plugin.cs                    # Plugin entry point (BasePlugin + IHasUIPages)
-├── PluginEntryPoint.cs          # IServerEntryPoint — shadow event subscriptions
-├── PluginOptions.cs             # UI options page (export, import, shadow, repair, sort)
+├── PluginEntryPoint.cs          # IServerEntryPoint — shadow + home-screen event subscriptions
+├── PluginOptions.cs             # Per-page options classes (export/import, shadow, sort, convert, themes)
 ├── PlaylistService.cs           # Core export/import logic
 ├── PlaylistQueries.cs           # The one place playlists are read (true order + entry ids)
 ├── PlaylistSortService.cs       # Sort preview/apply: backup, verify, move or rebuild
+├── PlaylistConvertService.cs    # Playlist to collection: preview, add in batches, read back
+├── HomeScreenService.cs         # Pin/shuffle theme collections onto the home screen
 ├── OperationGate.cs             # One long-running operation at a time
 ├── PlaylistRepairTask.cs        # IScheduledTask — weekly automated repair
 ├── Models/
@@ -102,6 +124,8 @@ EmbyPlaylistManager/
 │   ├── NaturalStringComparer.cs # Ordinal natural compare ("Ep 2" before "Ep 10")
 │   ├── PlaylistSorter.cs        # Builds the target order
 │   └── MovePlanner.cs           # Fewest MoveItem calls to reach it
+├── Conversion/
+│   └── ConversionPlanner.cs     # Pure helpers: distinct ids, missing ids, batches, name (unit-tested)
 ├── Services/
 │   ├── ExportPlaylistsRequest.cs
 │   ├── ImportPlaylistsRequest.cs
@@ -109,9 +133,15 @@ EmbyPlaylistManager/
 ├── Storage/
 │   ├── OptionsStore.cs          # Persists plugin settings to disk
 │   └── ShadowPlaylistService.cs # Reads/writes shadow files
-├── UI/
-│   ├── PageController.cs        # Wires page view into Emby UI system
-│   └── PluginPageView.cs        # Button handlers, preview, scan, repair, status
+├── UI/                          # One page per feature, grouped under a tabbed main page
+│   ├── MainPageController.cs    # Single "Playlist Manager" page with tabs
+│   ├── PluginPageViewBase.cs    # Shared view plumbing (gate, user, playlist dropdown)
+│   ├── ExportImportPageView.cs
+│   ├── ShadowPageView.cs
+│   ├── SortPageView.cs
+│   ├── ConvertPageView.cs
+│   ├── ThemesPageView.cs
+│   └── PageController.cs        # One navigable page/tab (name + view factory)
 ├── UIBaseClasses/               # Boilerplate from Emby SDK UI template
 └── ThumbImage.png               # Plugin icon (embedded resource)
 
@@ -133,12 +163,13 @@ This project references DLLs directly from an Emby Server `system` folder rather
 ### Building
 
 ```bash
-dotnet build EmbyPlaylistManager.csproj
+dotnet build EmbyPlaylistManager.csproj -c Debug     # copies to %AppData%\Emby-Server\programdata\plugins\
+dotnet build EmbyPlaylistManager.csproj -c Release   # copies to U:\emby\plugins\ and U:\emby-remote\plugins\
 ```
 
-Output: `bin\Debug\net8.0\EmbyPlaylistManager.dll`
+Output: `bin\Debug\net8.0\EmbyPlaylistManager.dll` (Debug) / `bin\Release\net8.0\EmbyPlaylistManager.dll` (Release)
 
-The PostBuild step automatically copies the DLL to `%AppData%\Emby-Server\programdata\plugins\` on build.
+The PostBuild step copies the DLL to the configured plugin folder(s) automatically on build.
 
 ## Usage
 
@@ -162,6 +193,15 @@ The PostBuild step automatically copies the DLL to `%AppData%\Emby-Server\progra
 - Click **Apply Sort** to make the change. Apply only works on a fresh preview; changing the playlist, mode or direction invalidates it
 - A backup of the previous order is saved to `{DataPath}\PlaylistManager\sort-backups\{playlistGuid}-{timestamp}.json` (the 10 most recent per playlist are kept)
 - Sort modes: *TV order* (series name, season, episode; specials after the regular seasons; non-episodes sort by name among the series), *Air / release date* (same-day episodes keep episode order), *Title* (natural order), *Date added*, *Shuffle*
+
+**Convert a Playlist to a Collection**
+- Choose the playlist in the **Convert a Playlist to a Collection** section. Leave **Collection name** empty to use the playlist's name
+- Click **Preview Conversion**, check the summary, then click **Create Collection**. It only works on a fresh preview; changing the playlist or name invalidates it
+- The collection is created with the first batch of items and filled in batches of 100, so large playlists show progress. If Emby refuses a batch, the items are retried one at a time
+
+**Themes**
+- Add theme names, then assign them to collections in the **Assign Collections** section (or convert a playlist to tag it automatically)
+- Use **Shuffle Themes on Home** to pin random themed collections to the home screen, and toggle the home-screen options (row count, box sets, randomize item order, shuffle on connect) as desired
 
 ### Plugin folder locations
 
@@ -291,7 +331,8 @@ Each export file is an array of playlist objects. `ProviderIds` captures all IDs
 - Sorting lists playlists visible to the dashboard user. A playlist containing rows that user cannot see is refused rather than risk misplacing items
 - Very large reorders rebuild the playlist (its internal row ids change and Emby queues a metadata refresh for the re-added items) instead of moving items one at a time
 - *Title* sort uses an ordinal natural comparison, so it can differ in edge cases from the order Emby's own UI shows
-- **The sort feature has not yet been run against a live Emby server.** `docs/reference/sort_playlist.md` lists the behaviours to verify first, and the move-versus-rebuild threshold is provisional until then
+- Collections are a set: a playlist's order and repeated rows are not carried over, and Emby decides which item types a collection accepts (anything it refuses is reported after the conversion)
+- **The sort feature has only been run on small playlists on a live server.** `docs/reference/sort_playlist.md` lists the behaviours to verify first, and the move-versus-rebuild threshold is provisional until then
 
 ## Developer Reference
 
@@ -304,6 +345,7 @@ Five documents in `docs/reference/` should be read together when working on this
 | `docs/reference/emby-sdk-primary-guide.md` | Confirmed namespaces, assembly map, and interface signatures for all Emby SDK types used |
 | `docs/reference/emby-sdk-supplemental-guide.md` | Patterns, gotchas, and findings specific to this plugin that aren't in the SDK docs |
 | `docs/reference/sort_playlist.md` | Sort feature design, the Emby playlist API facts it relies on, and the live-server verification checklist |
+| `docs/reference/convert_to_collection.md` | Playlist-to-collection design, the Emby collection API facts it relies on, and what to verify on a live server |
 
 ### Key paths
 

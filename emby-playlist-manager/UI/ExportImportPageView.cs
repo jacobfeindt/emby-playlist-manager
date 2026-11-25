@@ -1,0 +1,276 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Text.Json;
+using System.Threading.Tasks;
+using Emby.Web.GenericEdit.Elements;
+using Emby.Web.GenericEdit.Elements.List;
+using EmbyPlaylistManager.Models;
+using EmbyPlaylistManager.Storage;
+using MediaBrowser.Controller;
+using MediaBrowser.Controller.Library;
+using MediaBrowser.Model.Logging;
+using MediaBrowser.Model.Plugins;
+using MediaBrowser.Model.Plugins.UI.Views;
+
+namespace EmbyPlaylistManager.UI
+{
+    internal class ExportImportPageView : PluginPageViewBase
+    {
+        private readonly OptionsStore<ExportImportOptions> store;
+
+        public ExportImportPageView(
+            PluginInfo pluginInfo,
+            IServerApplicationHost appHost,
+            IUserManager userManager,
+            ILibraryManager libraryManager,
+            ILogger logger,
+            OptionsStore<ExportImportOptions> store)
+            : base(pluginInfo, appHost, userManager, libraryManager, logger)
+        {
+            this.store = store;
+            this.ContentData = store.GetOptions();
+        }
+
+        private ExportImportOptions Options => this.ContentData as ExportImportOptions;
+
+        public override Task<IPluginUIView> RunCommand(string itemId, string commandId, string data)
+        {
+            switch (commandId)
+            {
+                case "Export":
+                    if (string.IsNullOrWhiteSpace(this.Options.ExportFolder))
+                    {
+                        SetStatus("Export failed: Output folder is required.", ItemStatus.Failed);
+                        return Task.FromResult<IPluginUIView>(this);
+                    }
+                    if (!Directory.Exists(this.Options.ExportFolder))
+                    {
+                        SetStatus("Export failed: Output folder does not exist.", ItemStatus.Failed);
+                        return Task.FromResult<IPluginUIView>(this);
+                    }
+                    if (!IsDirectoryWritable(this.Options.ExportFolder))
+                    {
+                        SetStatus("Export failed: Output folder is not writable.", ItemStatus.Failed);
+                        return Task.FromResult<IPluginUIView>(this);
+                    }
+                    Task.Run(HandleExport);
+                    return Task.FromResult<IPluginUIView>(this);
+                case "Import":
+                    if (string.IsNullOrWhiteSpace(this.Options.ImportFilePath))
+                    {
+                        SetStatus("Import failed: File path is required.", ItemStatus.Failed);
+                        return Task.FromResult<IPluginUIView>(this);
+                    }
+                    return RunGated("Import", HandleImport, SetStatus);
+                case "Preview":
+                    HandlePreview();
+                    return Task.FromResult<IPluginUIView>(this);
+            }
+            return base.RunCommand(itemId, commandId, data);
+        }
+
+        public override Task<IPluginUIView> OnSaveCommand(string itemId, string commandId, string data)
+        {
+            this.Options.PreviewList.Clear();
+            this.Options.Status.StatusText = "No operation started yet.";
+            this.Options.Status.Status = ItemStatus.Unavailable;
+            store.SetOptions(this.Options);
+            return base.OnSaveCommand(itemId, commandId, data);
+        }
+
+        private void HandlePreview()
+        {
+            this.Options.PreviewList.Clear();
+            this.Options.SelectedFileLabel.Text = string.IsNullOrEmpty(this.Options.ImportFilePath)
+                ? "No file selected."
+                : this.Options.ImportFilePath;
+
+            if (string.IsNullOrWhiteSpace(this.Options.ImportFilePath) || !File.Exists(this.Options.ImportFilePath))
+            {
+                RaiseUIViewInfoChanged();
+                return;
+            }
+
+            try
+            {
+                var json = File.ReadAllText(this.Options.ImportFilePath);
+                var playlists = JsonSerializer.Deserialize<List<PlaylistExportDto>>(json);
+
+                if (playlists == null || playlists.Count == 0)
+                {
+                    this.Options.PreviewList.Add(new GenericListItem { PrimaryText = "No playlists found in file.", Status = ItemStatus.Warning });
+                    RaiseUIViewInfoChanged();
+                    return;
+                }
+
+                var existingNames = GetExistingPlaylistNames();
+                var overwrite = this.Options.OverwriteExisting;
+
+                foreach (var playlist in playlists)
+                {
+                    var exists = existingNames.Contains(playlist.PlaylistName, StringComparer.OrdinalIgnoreCase);
+                    string secondaryText;
+                    ItemStatus status;
+                    IconNames? icon;
+
+                    if (!exists)
+                    {
+                        secondaryText = $"{playlist.Items.Count} items — will be imported";
+                        status = ItemStatus.Succeeded;
+                        icon = IconNames.playlist_add;
+                    }
+                    else if (overwrite)
+                    {
+                        secondaryText = $"{playlist.Items.Count} items — will be overwritten";
+                        status = ItemStatus.Warning;
+                        icon = IconNames.warning;
+                    }
+                    else
+                    {
+                        secondaryText = $"{playlist.Items.Count} items — will be imported as '{GetPreviewUniqueName(playlist.PlaylistName, existingNames)}'";
+                        status = ItemStatus.Succeeded;
+                        icon = IconNames.playlist_add;
+                    }
+
+                    this.Options.PreviewList.Add(new GenericListItem
+                    {
+                        PrimaryText = playlist.PlaylistName,
+                        SecondaryText = secondaryText,
+                        Status = status,
+                        Icon = icon,
+                        IconMode = ItemListIconMode.SmallRegular
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                this.Options.PreviewList.Add(new GenericListItem
+                {
+                    PrimaryText = $"Could not read file: {ex.Message}",
+                    Status = ItemStatus.Failed,
+                    Icon = IconNames.error,
+                    IconMode = ItemListIconMode.SmallRegular
+                });
+            }
+
+            RaiseUIViewInfoChanged();
+        }
+
+        private async Task HandleExport()
+        {
+            SetStatus("Exporting...", ItemStatus.InProgress);
+
+            try
+            {
+                if (string.IsNullOrWhiteSpace(this.Options.ExportFolder))
+                {
+                    SetStatus("Export failed: Output folder is required.", ItemStatus.Failed);
+                    return;
+                }
+
+                var user = GetUser();
+                var playlists = this.Plugin.PlaylistService.ExportAllPlaylists(user);
+
+                if (playlists.Count == 0)
+                {
+                    SetStatus("No playlists found to export.", ItemStatus.Warning);
+                    return;
+                }
+
+                var serverName = string.Concat(appHost.FriendlyName.Split(Path.GetInvalidFileNameChars()));
+                var json = JsonSerializer.Serialize(playlists, new JsonSerializerOptions { WriteIndented = true });
+                var filePath = Path.Combine(this.Options.ExportFolder, $"{serverName}-playlists-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+                await File.WriteAllTextAsync(filePath, json);
+
+                SetStatus($"Exported {playlists.Count} playlists to {filePath}", ItemStatus.Succeeded);
+            }
+            catch (Exception ex)
+            {
+                logger.ErrorException("Export failed", ex);
+                SetStatus($"Export failed: {ex.Message}", ItemStatus.Failed);
+            }
+        }
+
+        private async Task HandleImport()
+        {
+            SetStatus("Importing...", ItemStatus.InProgress);
+
+            try
+            {
+                if (string.IsNullOrWhiteSpace(this.Options.ImportFilePath))
+                {
+                    SetStatus("Import failed: File path is required.", ItemStatus.Failed);
+                    return;
+                }
+
+                if (!File.Exists(this.Options.ImportFilePath))
+                {
+                    SetStatus($"Import failed: File not found: {this.Options.ImportFilePath}", ItemStatus.Failed);
+                    return;
+                }
+
+                var json = await File.ReadAllTextAsync(this.Options.ImportFilePath);
+                var playlists = JsonSerializer.Deserialize<List<PlaylistExportDto>>(json);
+
+                if (playlists == null || playlists.Count == 0)
+                {
+                    SetStatus("Import failed: No playlists found in file.", ItemStatus.Failed);
+                    return;
+                }
+
+                var existingNames = GetExistingPlaylistNames();
+                var overwrite = this.Options.OverwriteExisting;
+
+                var user = GetUser();
+                await this.Plugin.PlaylistService.ImportPlaylists(user, playlists, overwrite);
+
+                SetStatus($"Import complete: {playlists.Count} playlists processed.", ItemStatus.Succeeded);
+                HandlePreview();
+            }
+            catch (Exception ex)
+            {
+                logger.ErrorException("Import failed", ex);
+                SetStatus($"Import failed: {ex.Message}", ItemStatus.Failed);
+            }
+        }
+
+        private string GetPreviewUniqueName(string baseName, HashSet<string> existingNames)
+        {
+            var candidate = baseName;
+            var i = 1;
+            while (existingNames.Contains(candidate))
+                candidate = $"{baseName} ({i++})";
+            return candidate;
+        }
+
+        private HashSet<string> GetExistingPlaylistNames()
+        {
+            return this.Plugin.PlaylistService.GetExistingPlaylistNames(GetUser());
+        }
+
+        private void SetStatus(string message, ItemStatus status)
+        {
+            this.Options.Status.StatusText = message;
+            this.Options.Status.Status = status;
+            this.Options.ExportButton.IsEnabled = status != ItemStatus.InProgress;
+            this.Options.ImportButton.IsEnabled = status != ItemStatus.InProgress;
+            RaiseUIViewInfoChanged();
+        }
+
+        private static bool IsDirectoryWritable(string path)
+        {
+            try
+            {
+                var testFile = Path.Combine(path, Path.GetRandomFileName());
+                using (File.Create(testFile, 1, FileOptions.DeleteOnClose)) { }
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+    }
+}

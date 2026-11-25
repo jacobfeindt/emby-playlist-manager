@@ -181,6 +181,17 @@ A playlist is a list of **rows**, and each row has its own **entry id**. The ent
 
 The plugin reads playlists through `PlaylistQueries.GetOrderedEntries` so that every read uses `ListItemOrder` and entry ids are available. Do not add new `ListIds` reads that skip it.
 
+### Collections (confirmed from the SDK reference and OpenAPI spec)
+
+| Plugin API / REST | Purpose |
+|---|---|
+| `ICollectionManager.CreateCollection(CollectionCreationOptions)` returns `Task<BoxSet>` | Options: `Name`, `IsLocked`, `ItemIdList`, `ParentId`, `ProviderIds`, `UserIds`. REST `POST /Collections` makes `Ids` optional. |
+| `ICollectionManager.AddToCollection(long collectionId, long[] itemIds)` returns `Task` | Adds by item `InternalId`. Which item types are accepted is not documented. |
+| `ICollectionManager.RemoveFromCollection(BoxSet, long[])` | Synchronous. REST: `DELETE /Collections/{Id}/Items?Ids=`. |
+| `InternalItemsQuery.CollectionIds` | Reads a collection's members. |
+
+Resolve `ICollectionManager` with `appHost.Resolve<ICollectionManager>()` when it is needed rather than adding it to the `Plugin` constructor, so a missing registration cannot stop the plugin loading.
+
 ### REST scheduled task endpoints
 
 | Method | Path | Purpose |

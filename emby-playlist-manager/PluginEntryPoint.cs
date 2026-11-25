@@ -1,10 +1,12 @@
 using System;
+using System.Collections.Concurrent;
 using System.Linq;
 using System.Threading.Tasks;
 using MediaBrowser.Common;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Plugins;
 using MediaBrowser.Controller.Playlists;
+using MediaBrowser.Controller.Session;
 using MediaBrowser.Model.Logging;
 
 namespace EmbyPlaylistManager
@@ -19,6 +21,11 @@ namespace EmbyPlaylistManager
 
         private Plugin _plugin;
         private bool _shadowFolderReady;
+        private ISessionManager _sessionManager;
+
+        // Coalesces rapid reconnect events so one sign-in doesn't shuffle several times.
+        private static readonly ConcurrentDictionary<long, DateTime> LastAutoShuffle = new ConcurrentDictionary<long, DateTime>();
+        private static readonly TimeSpan AutoShuffleMinInterval = TimeSpan.FromMinutes(1);
 
         public PluginEntryPoint(
             IApplicationHost appHost,
@@ -43,7 +50,14 @@ namespace EmbyPlaylistManager
                 return;
             }
 
-            var options = _plugin.OptionsStore.GetOptions();
+            _sessionManager = _appHost.Resolve<ISessionManager>();
+            if (_sessionManager != null)
+            {
+                _sessionManager.SessionStarted += OnSessionStarted;
+                _logger.Info("Themes on home: listening for session start events.");
+            }
+
+            var options = _plugin.ShadowStore.GetOptions();
             _logger.Info("Shadow system: EnableShadow={0}", options.EnableShadow);
 
             if (!options.EnableShadow)
@@ -104,10 +118,59 @@ namespace EmbyPlaylistManager
                 _playlistManager.PlaylistItemsRemoved -= OnPlaylistItemsRemoved;
                 _playlistManager.PlaylistItemsMoved   -= OnPlaylistItemsMoved;
                 _libraryManager.ItemAdded             -= OnItemAdded;
+                if (_sessionManager != null)
+                    _sessionManager.SessionStarted -= OnSessionStarted;
             }
             catch (Exception ex)
             {
                 _logger.ErrorException("Error unsubscribing shadow events", ex);
+            }
+        }
+
+        private void OnSessionStarted(object sender, SessionEventArgs e)
+        {
+            try
+            {
+                var session = e.SessionInfo;
+                if (session == null || !session.HasUser || string.IsNullOrWhiteSpace(session.UserId))
+                    return;
+
+                if (_plugin == null) _plugin = _appHost.Resolve<Plugin>();
+                if (_plugin == null) return;
+
+                var themesOptions = _plugin.ThemesStore.GetOptions();
+                if (!themesOptions.AutoShuffleOnConnect)
+                    return;
+
+                if (!Guid.TryParse(session.UserId, out var userGuid))
+                    return;
+
+                var user = _userManager.GetUserById(userGuid);
+                if (user == null) return;
+
+                // Coalesce rapid reconnects.
+                var now = DateTime.UtcNow;
+                if (LastAutoShuffle.TryGetValue(user.InternalId, out var last) && (now - last) < AutoShuffleMinInterval)
+                    return;
+                LastAutoShuffle[user.InternalId] = now;
+
+                int count = Math.Max(1, themesOptions.HomeThemeCount);
+                _logger.Info("Themes on home: session started for user '{0}'; auto-shuffling {1} themes.", user.Name, count);
+                Task.Run(async () =>
+                {
+                    try
+                    {
+                        await _plugin.HomeScreenService.ShuffleThemesOnHome(user, count, themesOptions.ThemeNames, themesOptions.IncludeBoxSets, themesOptions.RandomizeItemOrder);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.Warn("Themes on home: auto-shuffle failed for '{0}': {1}", user.Name, ex.Message);
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn("Themes on home: could not handle session start: {0}", ex.Message);
             }
         }
 

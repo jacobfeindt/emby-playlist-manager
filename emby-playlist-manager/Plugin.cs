@@ -23,17 +23,29 @@ namespace EmbyPlaylistManager
         private readonly IServerApplicationHost _appHost;
         private readonly ILibraryManager _libraryManager;
         private readonly ILogger _logger;
-        private readonly OptionsStore _optionsStore;
+        private readonly OptionsStore<ExportImportOptions> _exportStore;
+        private readonly OptionsStore<ShadowOptions> _shadowStore;
+        private readonly OptionsStore<SortOptions> _sortStore;
+        private readonly OptionsStore<ConvertOptions> _convertStore;
+        private readonly OptionsStore<ThemesOptions> _themesStore;
         private readonly PlaylistService _playlistService;
         private readonly ShadowPlaylistService _shadowService;
         private List<IPluginUIPageController> _pages;
 
         private readonly PlaylistSortService _sortService;
+        private readonly PlaylistConvertService _convertService;
+        private readonly HomeScreenService _homeScreenService;
 
-        public OptionsStore OptionsStore => _optionsStore;
+        public OptionsStore<ExportImportOptions> ExportStore => _exportStore;
+        public OptionsStore<ShadowOptions> ShadowStore => _shadowStore;
+        public OptionsStore<SortOptions> SortStore => _sortStore;
+        public OptionsStore<ConvertOptions> ConvertStore => _convertStore;
+        public OptionsStore<ThemesOptions> ThemesStore => _themesStore;
         public PlaylistService PlaylistService => _playlistService;
         public ShadowPlaylistService ShadowService => _shadowService;
         public PlaylistSortService SortService => _sortService;
+        public PlaylistConvertService ConvertService => _convertService;
+        public HomeScreenService HomeScreenService => _homeScreenService;
 
         // Emby's IApplicationHost.Resolve<Plugin>() builds a NEW Plugin on every call, so anything that must be shared between
         // the page, the scheduled task, the HTTP API and the event handlers has to live in a static, not in an instance field.
@@ -52,11 +64,17 @@ namespace EmbyPlaylistManager
             _appHost = appHost;
             _libraryManager = libraryManager;
             _logger = logManager.GetLogger(PluginName);
-            _optionsStore = new OptionsStore(appHost, _logger, PluginName);
+            _exportStore = new OptionsStore<ExportImportOptions>(appHost, _logger, "PlaylistManager.ExportImport");
+            _shadowStore = new OptionsStore<ShadowOptions>(appHost, _logger, "PlaylistManager.Shadow");
+            _sortStore = new OptionsStore<SortOptions>(appHost, _logger, "PlaylistManager.Sort");
+            _convertStore = new OptionsStore<ConvertOptions>(appHost, _logger, "PlaylistManager.Convert");
+            _themesStore = new OptionsStore<ThemesOptions>(appHost, _logger, "PlaylistManager.Themes");
             _playlistService = new PlaylistService(libraryManager, playlistManager, _logger);
             var appPaths = appHost.Resolve<IApplicationPaths>();
             _shadowService = new ShadowPlaylistService(libraryManager, appPaths, _logger);
             _sortService = new PlaylistSortService(libraryManager, playlistManager, _shadowService, appPaths, _logger);
+            _convertService = new PlaylistConvertService(appHost, libraryManager, _logger);
+            _homeScreenService = new HomeScreenService(appHost, libraryManager, _logger);
             _logger.Info("Playlist Manager plugin loaded ({0}).", DescribeBuild());
         }
 
@@ -99,24 +117,31 @@ namespace EmbyPlaylistManager
             {
                 if (_pages == null)
                 {
+                    var userManager = _appHost.Resolve<IUserManager>();
+                    var info = GetPluginInfo();
+                    var tabs = new List<IPluginUIPageController>
+                    {
+                        new PageController(info, "PlaylistManagerExportImport", "Export & Import", "import_export",
+                            () => new ExportImportPageView(info, _appHost, userManager, _libraryManager, _logger, _exportStore), enableInMainMenu: false),
+                        new PageController(info, "PlaylistManagerShadow", "Shadow Playlists", "sync",
+                            () => new ShadowPageView(info, _appHost, userManager, _libraryManager, _logger, _shadowStore), enableInMainMenu: false),
+                        new PageController(info, "PlaylistManagerSort", "Sort a Playlist", "sort",
+                            () => new SortPageView(info, _appHost, userManager, _libraryManager, _logger, _sortStore), enableInMainMenu: false),
+                        new PageController(info, "PlaylistManagerConvert", "Convert to Collection", "playlist_add",
+                            () => new ConvertPageView(info, _appHost, userManager, _libraryManager, _logger, _convertStore), enableInMainMenu: false),
+                        new PageController(info, "PlaylistManagerThemes", "Themes", "tag",
+                            () => new ThemesPageView(info, _appHost, userManager, _libraryManager, _logger, _themesStore), enableInMainMenu: false),
+                    };
                     _pages = new List<IPluginUIPageController>
                     {
-                        new PageController(
-                            GetPluginInfo(),
-                            _appHost,
-                            _optionsStore,
-                            _appHost.Resolve<IUserManager>(),
-                            _libraryManager,
-                            _playlistService,
-                            _shadowService,
-                            _logger)
+                        new MainPageController(info, tabs)
                     };
                 }
                 return _pages.AsReadOnly();
             }
         }
 
-        public Type ConfigurationType => typeof(PluginOptions);
+        public Type ConfigurationType => typeof(ShadowOptions);
         public BasePluginConfiguration Configuration { get; } = new BasePluginConfiguration();
         public void UpdateConfiguration(BasePluginConfiguration configuration) { }
         public void SetStartupInfo(Action<string> directoryCreateFn) { }

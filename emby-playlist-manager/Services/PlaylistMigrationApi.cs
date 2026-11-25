@@ -36,7 +36,7 @@ namespace EmbyPlaylistManager.Services
 
             var outputFolder = !string.IsNullOrWhiteSpace(request.OutputFolder)
                 ? request.OutputFolder
-                : plugin.OptionsStore.GetOptions().ExportFolder;
+                : plugin.ExportStore.GetOptions().ExportFolder;
 
             if (string.IsNullOrWhiteSpace(outputFolder))
                 throw new ArgumentException("No output folder specified and none configured in plugin settings.");

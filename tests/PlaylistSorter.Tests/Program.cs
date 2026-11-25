@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
+using EmbyPlaylistManager.Conversion;
 using EmbyPlaylistManager.Sorting;
 
 internal static class Program
@@ -25,6 +26,10 @@ internal static class Program
         Run("planner: duplicate library items (distinct entry ids) are handled", PlannerDuplicateItems);
         Run("planner: invalid input is rejected", PlannerInvalid);
         Run("fixture: generated 2,769-row playlist shuffled and TV-sorted", Fixture);
+        Run("convert: unique ids keep first occurrence order", ConvertUnique);
+        Run("convert: only ids missing from the collection are added", ConvertMissing);
+        Run("convert: chunks keep order and respect the size", ConvertChunks);
+        Run("convert: collection name falls back to the playlist name", ConvertName);
 
         Console.WriteLine();
         Console.WriteLine(_failed == 0 ? $"ALL {_passed} TESTS PASSED" : $"{_failed} FAILED, {_passed} passed");
@@ -260,6 +265,41 @@ internal static class Program
         }
     }
 
+    private static void ConvertUnique()
+    {
+        Equal("5,3,9,1", string.Join(",", ConversionPlanner.UniqueInOrder(new long[] { 5, 3, 5, 9, 3, 1, 9 })), "first occurrences, in order");
+        Equal(0, ConversionPlanner.UniqueInOrder(new long[0]).Count, "empty stays empty");
+        Throws2(() => ConversionPlanner.UniqueInOrder(null), "null ids");
+    }
+
+    private static void ConvertMissing()
+    {
+        var wanted = new long[] { 1, 2, 2, 3, 4, 3 };
+        Equal("2,4", string.Join(",", ConversionPlanner.Missing(wanted, new long[] { 1, 3, 99 })), "missing, distinct, in wanted order");
+        Equal("1,2,3,4", string.Join(",", ConversionPlanner.Missing(wanted, null)), "null collection means everything is missing");
+        Equal(0, ConversionPlanner.Missing(wanted, new long[] { 1, 2, 3, 4 }).Count, "nothing missing");
+    }
+
+    private static void ConvertChunks()
+    {
+        var ids = Enumerable.Range(1, 250).Select(i => (long)i).ToList();
+        var chunks = ConversionPlanner.Chunk(ids, 100);
+        Equal(3, chunks.Count, "chunk count");
+        Equal(100, chunks[0].Length, "first chunk size");
+        Equal(50, chunks[2].Length, "last chunk size");
+        True(chunks.SelectMany(c => c).SequenceEqual(ids), "chunks rejoin to the original order");
+        Equal(0, ConversionPlanner.Chunk(new List<long>(), 100).Count, "empty input has no chunks");
+        Throws2(() => ConversionPlanner.Chunk(ids, 0), "size 0");
+    }
+
+    private static void ConvertName()
+    {
+        Equal("My Collection", ConversionPlanner.ResolveName("  My Collection ", "Playlist"), "typed name is trimmed and wins");
+        Equal("Playlist", ConversionPlanner.ResolveName("   ", " Playlist "), "blank name uses the playlist name");
+        Equal("Playlist", ConversionPlanner.ResolveName(null, "Playlist"), "null name uses the playlist name");
+        Equal(string.Empty, ConversionPlanner.ResolveName(null, null), "nothing at all gives an empty name, never null");
+    }
+
     // ---------------------------------------------------------------- builders and helpers
 
     private static SortEntry Ep(int id, string series, int? season, int? episode, string name)
@@ -347,6 +387,12 @@ internal static class Program
     private static void Equal<T>(T expected, T actual, string what)
     {
         if (!EqualityComparer<T>.Default.Equals(expected, actual)) throw new Exception(what + ": expected <" + expected + "> but was <" + actual + ">");
+    }
+
+    private static void Throws2(Action a, string what)
+    {
+        try { a(); } catch (ArgumentException) { return; }
+        throw new Exception("expected ArgumentException (or a subclass): " + what);
     }
 
     private static void Throws(Action a, string what)
