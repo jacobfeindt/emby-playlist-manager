@@ -19,7 +19,7 @@ namespace EmbyPlaylistManager.UI
 
             this.PageInfo = new PluginPageInfo
             {
-                Name = "PlaylistManager",
+                Name = "PlaylistManagerMainPage",
                 EnableInMainMenu = true,
                 DisplayName = "Playlist Manager",
                 MenuIcon = "import_export",
